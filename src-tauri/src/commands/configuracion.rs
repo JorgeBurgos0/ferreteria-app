@@ -145,7 +145,7 @@ pub fn restore_database(backup_path: &Path, conn_dest: &mut Connection, safety_p
 }
 
 #[tauri::command]
-pub fn restaurar_backup(ruta_backup: String, db: DbConn, app: AppHandle, session: State<SessionState>) -> Result<(), String> {
+pub fn restaurar_backup(ruta_backup: String, db: DbConn, app: AppHandle, session: State<SessionState>, scanner: State<crate::mobile_scanner::MobileScannerState>) -> Result<(), String> {
     let actor = session.current_user()?.username;
     let mut conn_dest = db.0.lock().map_err(|e| e.to_string())?;
     let safety_path = app.path().app_data_dir().map_err(|e| e.to_string())?
@@ -153,6 +153,7 @@ pub fn restaurar_backup(ruta_backup: String, db: DbConn, app: AppHandle, session
     restore_database(Path::new(&ruta_backup), &mut conn_dest, &safety_path)?;
     auditoria::registrar_evento_interno(&conn_dest, &actor, "RESTAURAR_BACKUP", Some("Restauración completada; copia de seguridad previa conservada"))
         .map_err(|e| e.to_string())?;
+    scanner.stop()?;
     session.clear()?;
 
     Ok(())

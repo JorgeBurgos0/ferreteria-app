@@ -14,4 +14,4 @@ Los respaldos son copias SQLite locales elegidas por el usuario. El respaldo aut
 
 ## Dispositivos e integraciones
 
-El lector de códigos debe comportarse como teclado y enviar un SKU seguido de Enter. Los tickets usan el diálogo de impresión del sistema. El cobro con tarjeta se realiza fuera de la aplicación; esta registra el importe que declara el operador, sin comunicarse con una terminal ni almacenar números de tarjeta. La aplicación no envía datos del negocio a una nube propia.
+El lector de códigos puede comportarse como teclado y enviar un SKU seguido de Enter. El lector móvil opcional sirve una página solo en `127.0.0.1` y usa `adb reverse` para que Chrome en Android la abra como `localhost`; la cámara se procesa en el móvil y solo se envía el SKU. El servicio exige un código de emparejamiento y se cierra al salir del punto de venta o de la sesión. Los tickets usan el diálogo de impresión del sistema. El cobro con tarjeta se realiza fuera de la aplicación; esta registra el importe que declara el operador, sin comunicarse con una terminal ni almacenar números de tarjeta. La aplicación no envía datos del negocio a una nube propia.

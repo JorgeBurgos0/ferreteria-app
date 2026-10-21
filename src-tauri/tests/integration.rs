@@ -17,6 +17,9 @@ fn permissions_reject_other_roles_and_invalidate_old_sessions() {
     for command in ["procesar_devolucion", "guardar_corte", "crear_cotizacion", "obtener_detalle_cotizacion", "agregar_cliente", "previsualizar_clientes", "leer_clientes_archivo", "crear_backup", "guardar_configuracion_local", "guardar_datos_empresa", "guardar_reporte_archivo", "obtener_logs"] {
         assert!(!state.authorize(&seller, required_permission(command).unwrap()), "{command}");
     }
+    for command in ["iniciar_lector_movil", "conectar_android_usb", "tomar_lectura_movil", "detener_lector_movil"] {
+        assert!(state.authorize(&seller, required_permission(command).unwrap()), "{command}");
+    }
     assert!(!state.authorize(&seller, required_permission("restaurar_backup").unwrap()));
     assert!(!state.authorize(&seller, required_permission("agregar_producto").unwrap()));
     assert!(!state.authorize(&seller, required_permission("confirmar_proveedores").unwrap()));

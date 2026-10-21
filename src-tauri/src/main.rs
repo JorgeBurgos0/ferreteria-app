@@ -66,6 +66,10 @@ fn main() {
             commands::archivos::leer_clientes_archivo,
             commands::archivos::leer_proveedores_archivo,
             commands::archivos::guardar_reporte_archivo,
+            ferreteria_app::mobile_scanner::iniciar_lector_movil,
+            ferreteria_app::mobile_scanner::conectar_android_usb,
+            ferreteria_app::mobile_scanner::tomar_lectura_movil,
+            ferreteria_app::mobile_scanner::detener_lector_movil,
             commands::configuracion::obtener_datos_empresa,
             commands::configuracion::guardar_datos_empresa,
             commands::devoluciones::generar_reporte_devoluciones,
@@ -81,6 +85,7 @@ fn main() {
         ]);
     tauri::Builder::default()
         .manage(auth::SessionState::default())
+        .manage(ferreteria_app::mobile_scanner::MobileScannerState::default())
         .setup(|app| {
             let handle = app.handle();
             let app_dir = handle

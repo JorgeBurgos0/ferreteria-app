@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lector móvil · Ferretería App</title>
+  <style>
+    :root { font-family: system-ui, sans-serif; color: #1d2630; background: #f4f7fa; }
+    body { max-width: 34rem; margin: auto; padding: 1.25rem; }
+    main { background: white; border-radius: 1rem; padding: 1.25rem; box-shadow: 0 2px 16px #24314a18; }
+    h1 { margin-top: 0; font-size: 1.5rem; }
+    p { line-height: 1.45; }
+    label { display: block; margin: 1rem 0 .35rem; font-weight: 600; }
+    input, button { box-sizing: border-box; font: inherit; min-height: 3rem; border-radius: .55rem; }
+    input { width: 100%; border: 1px solid #8896a8; padding: .6rem; }
+    button { border: 0; background: #1769aa; color: white; padding: .6rem 1rem; margin: .7rem .5rem .3rem 0; }
+    button:disabled { opacity: .5; }
+    video { display: block; width: 100%; min-height: 14rem; background: #111; border-radius: .65rem; object-fit: cover; }
+    #status { position: sticky; top: 0; z-index: 1; min-height: 2.5rem; font-weight: 600; background: #e8f3fc; border-radius: .5rem; padding: .6rem; }
+    .hint { color: #4a5968; font-size: .9rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Lector móvil</h1>
+    <p>El código leído se envía solo a Ferretería App en este equipo. La imagen de la cámara permanece en el móvil.</p>
+    <p id="status" role="status" aria-live="polite"></p>
+    <form id="pair-form">
+      <label for="pair-code">Código mostrado en el punto de venta</label>
+      <input id="pair-code" type="text" inputmode="numeric" pattern="[0-9]{8}" maxlength="8" autocomplete="off" required>
+      <button type="submit">Conectar</button>
+    </form>
+    <section id="scanner" hidden>
+      <video id="camera" autoplay muted playsinline></video>
+      <button id="camera-button" type="button">Activar cámara</button>
+      <form id="manual-form">
+        <label for="sku">SKU manual</label>
+        <input id="sku" type="text" maxlength="128" autocomplete="off">
+        <button type="submit">Enviar SKU</button>
+      </form>
+      <p class="hint">Apunta al código de barras. Si la cámara no lo reconoce, escribe el SKU y envíalo.</p>
+    </section>
+  </main>
+  <script src="/scanner.js" defer></script>
+</body>
+</html>

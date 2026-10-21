@@ -1,5 +1,5 @@
 // src/components/PuntoDeVenta.tsx
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Button, Paper, Title, Table, Group, Text, TextInput, NumberInput, ActionIcon, Stack, Select, Modal, SegmentedControl, Switch, Alert } from '@mantine/core';
 import { IconTrash, IconShoppingCart, IconPrinter, IconFileText, IconAlertCircle } from '@tabler/icons-react';
 import { invoke } from '../lib/invoke';
@@ -39,12 +39,17 @@ interface PuntoDeVentaProps {
     canQuote: boolean;
 }
 
+interface LectorMovil { port: number; code: string }
+
 export function PuntoDeVenta({ userId, canSell, canQuote }: PuntoDeVentaProps) {
     const [productos, setProductos] = useState<Producto[]>([]);
     const [carrito, setCarrito] = useState<ItemCarrito[]>([]);
     const [total, setTotal] = useState(0);
     const [skuInput, setSkuInput] = useState('');
     const [codigoManual, setCodigoManual] = useState('');
+    const [lectorMovil, setLectorMovil] = useState<LectorMovil | null>(null);
+    const [estadoLectorMovil, setEstadoLectorMovil] = useState('');
+    const procesarDesdeMovil = useRef<(sku: string) => void>(() => undefined);
     const [datosUltimaVenta, setDatosUltimaVenta] = useState<DatosVentaTicket | null>(null);
 
     // Estados para clientes
@@ -121,6 +126,50 @@ export function PuntoDeVenta({ userId, canSell, canQuote }: PuntoDeVentaProps) {
         } else {
             setError(`No se encontró el SKU "${codigo.trim()}".`);
         }
+    };
+    procesarDesdeMovil.current = procesarCodigoBarras;
+
+    useEffect(() => {
+        if (!lectorMovil) return;
+        let ocupado = false;
+        const timer = window.setInterval(async () => {
+            if (ocupado) return;
+            ocupado = true;
+            try {
+                const codigo = await invoke<string | null>('tomar_lectura_movil');
+                if (codigo) {
+                    procesarDesdeMovil.current(codigo);
+                    setEstadoLectorMovil(`Recibido: ${codigo}`);
+                }
+            } catch (reason) {
+                setEstadoLectorMovil(String(reason));
+            } finally { ocupado = false; }
+        }, 500);
+        return () => window.clearInterval(timer);
+    }, [lectorMovil]);
+
+    useEffect(() => () => {
+        void invoke('detener_lector_movil').catch(() => undefined);
+    }, []);
+
+    const iniciarLectorMovil = async () => {
+        try {
+            const info = await invoke<LectorMovil>('iniciar_lector_movil');
+            setLectorMovil(info);
+            try {
+                await invoke('conectar_android_usb');
+                setEstadoLectorMovil('Conexión USB preparada. Abre la dirección en Chrome del móvil.');
+            } catch (reason) {
+                setEstadoLectorMovil(`Lector activo; conexión USB pendiente: ${reason}`);
+            }
+        } catch (reason) { setEstadoLectorMovil(`No se pudo iniciar el lector: ${reason}`); }
+    };
+
+    const detenerLectorMovil = async () => {
+        try { await invoke('detener_lector_movil'); }
+        catch (reason) { setEstadoLectorMovil(`No se pudo detener el lector: ${reason}`); return; }
+        setLectorMovil(null);
+        setEstadoLectorMovil('Lector detenido.');
     };
 
     const agregarAlCarrito = (producto: Producto) => {
@@ -411,6 +460,22 @@ export function PuntoDeVenta({ userId, canSell, canQuote }: PuntoDeVentaProps) {
                     </Group>
                 </Group>
             </Paper>
+
+            {canSell && <Paper p="md" shadow="xs" withBorder>
+                <Title order={4}>Lector con Android</Title>
+                <Text size="sm">Conecta el móvil por USB y autoriza la depuración USB. La cámara y el SKU funcionan sin nube.</Text>
+                {!lectorMovil ? <Button mt="sm" onClick={iniciarLectorMovil}>Activar lector móvil</Button> : <>
+                    <Text mt="sm">En Chrome del móvil abre <strong>http://localhost:{lectorMovil.port}</strong> y escribe el código <strong>{lectorMovil.code}</strong>.</Text>
+                    <Group mt="sm">
+                        <Button variant="light" onClick={async () => {
+                            try { await invoke('conectar_android_usb'); setEstadoLectorMovil('Conexión USB preparada.'); }
+                            catch (reason) { setEstadoLectorMovil(String(reason)); }
+                        }}>Reintentar conexión USB</Button>
+                        <Button variant="subtle" color="red" onClick={detenerLectorMovil}>Detener lector</Button>
+                    </Group>
+                </>}
+                {estadoLectorMovil && <Text size="sm" mt="sm">{estadoLectorMovil}</Text>}
+            </Paper>}
 
             {datosUltimaVenta && (
                 <TicketImprimible datos={datosUltimaVenta} datosEmpresa={datosEmpresa} />

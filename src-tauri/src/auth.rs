@@ -119,6 +119,7 @@ pub fn required_permission(command: &str) -> Result<Option<&'static str>, ()> {
         | "previsualizar_proveedores" | "confirmar_proveedores"
         | "actualizar_proveedor" | "eliminar_proveedor" => Some("gestion_inventario"),
         "realizar_venta" => Some("realizar_venta"),
+        "iniciar_lector_movil" | "conectar_android_usb" | "tomar_lectura_movil" | "detener_lector_movil" => Some("realizar_venta"),
         "crear_cotizacion" | "obtener_cotizaciones" | "obtener_detalle_cotizacion" | "eliminar_cotizacion" => Some("gestionar_cotizaciones"),
         "buscar_venta_para_devolucion" | "procesar_devolucion" => Some("gestionar_devoluciones"),
         "agregar_cliente" | "actualizar_cliente" | "eliminar_cliente"

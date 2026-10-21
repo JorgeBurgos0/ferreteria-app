@@ -14,6 +14,12 @@ Las bibliotecas de sistema que necesita Tauri se instalan con privilegios de adm
 sudo dnf install webkit2gtk4.1-devel libappindicator-gtk3-devel librsvg2-devel libxdo-devel dbus-devel
 ```
 
+Para usar un móvil Android como lector por USB, instala también ADB:
+
+```bash
+sudo dnf install android-tools
+```
+
 `wget` solo se necesita si se usa para descargar el instalador de Rust; no es requisito para compilar esta aplicación. Consulta también los [requisitos oficiales de Tauri para Linux](https://v2.tauri.app/start/prerequisites/).
 
 ## Desarrollo

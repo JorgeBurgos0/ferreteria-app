@@ -1,5 +1,5 @@
 // src-tauri/src/commands/seguridad.rs
-use crate::{auth::SessionState, commands::auditoria, db::DbConnection};
+use crate::{auth::SessionState, commands::auditoria, db::DbConnection, mobile_scanner::MobileScannerState};
 use argon2::{
     password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
@@ -31,7 +31,7 @@ pub struct Usuario {
 }
 
 #[tauri::command]
-pub fn login(username: String, password: String, db: DbConn, session: State<SessionState>) -> Result<UsuarioLogueado, String> {
+pub fn login(username: String, password: String, db: DbConn, session: State<SessionState>, scanner: State<MobileScannerState>) -> Result<UsuarioLogueado, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
 
     // 1. Buscamos al usuario por su nombre de usuario
@@ -89,6 +89,7 @@ pub fn login(username: String, password: String, db: DbConn, session: State<Sess
     let requiere_cambio_password = debe_cambiar_password || username == "admin" && password == "admin";
     auditoria::registrar_evento_interno(&conn, &username, "INICIO_SESION", None)
         .map_err(|e| e.to_string())?;
+    scanner.stop()?;
     let token = session.start(id, username.clone(), permisos.clone(), requiere_cambio_password)?;
     Ok(UsuarioLogueado { id, username, rol, permisos, token, requiere_cambio_password })
 }
@@ -161,7 +162,8 @@ pub fn cambiar_password(password_actual: String, password_nueva: String, db: DbC
 }
 
 #[tauri::command]
-pub fn logout(session: State<SessionState>) -> Result<(), String> {
+pub fn logout(session: State<SessionState>, scanner: State<MobileScannerState>) -> Result<(), String> {
+    scanner.stop()?;
     session.clear()
 }
 
