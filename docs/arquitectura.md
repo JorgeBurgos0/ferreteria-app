@@ -10,7 +10,7 @@ La primera apertura permite crear una cuenta administradora. Las contraseñas se
 
 `src-tauri/src/db.rs` crea y actualiza el esquema. `PRAGMA user_version` identifica su versión y las migraciones se ejecutan dentro de una transacción. Ventas y devoluciones guardan importes de efectivo y tarjeta por separado; los kits guardan sus componentes al venderse para poder reponerlos en una devolución.
 
-Los respaldos son copias SQLite elegidas por el usuario. La restauración comprueba la integridad, guarda una copia de seguridad previa y cierra la sesión. El respaldo y los archivos exportados no están cifrados; quien administre el equipo debe protegerlos con permisos y almacenamiento adecuados.
+Los respaldos son copias SQLite locales elegidas por el usuario. El respaldo automático es opcional y se comprueba al iniciar la aplicación y cada hora mientras permanezca abierta; crea como máximo una copia diaria, verifica la integridad y rota solo sus propios archivos. La retención de bitácora se ejecuta después de una copia válida. La restauración comprueba la integridad, guarda una copia de seguridad previa, registra el evento en la base restaurada y cierra la sesión. La importación de clientes y proveedores se analiza en la interfaz y se valida de nuevo en Rust dentro de una transacción. El respaldo y los archivos exportados no están cifrados; quien administre el equipo debe protegerlos con permisos y almacenamiento adecuados.
 
 ## Dispositivos e integraciones
 

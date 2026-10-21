@@ -55,6 +55,12 @@ fn main() {
             commands::proveedores::eliminar_proveedor,
             commands::configuracion::restaurar_backup,
             commands::configuracion::crear_backup,
+            commands::configuracion::obtener_configuracion_local,
+            commands::configuracion::guardar_configuracion_local,
+            commands::importaciones::previsualizar_clientes,
+            commands::importaciones::confirmar_clientes,
+            commands::importaciones::previsualizar_proveedores,
+            commands::importaciones::confirmar_proveedores,
             commands::configuracion::obtener_datos_empresa,
             commands::configuracion::guardar_datos_empresa,
             commands::devoluciones::generar_reporte_devoluciones,
@@ -84,6 +90,17 @@ fn main() {
 
             db::inicializar(&conn).expect("Failed to initialize database");
             app.manage(db::DbConnection(Mutex::new(conn)));
+            let background = app.handle().clone();
+            std::thread::spawn(move || loop {
+                if let Some(database) = background.try_state::<db::DbConnection>() {
+                    if let Ok(mut conn) = database.0.lock() {
+                        if let Err(error) = commands::backups::run_automatic_recorded(&mut conn) {
+                            eprintln!("Respaldo automático: {error}");
+                        }
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_secs(3600));
+            });
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())

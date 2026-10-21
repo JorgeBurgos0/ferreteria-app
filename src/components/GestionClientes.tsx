@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { invoke } from '../lib/invoke';
 import { Table, Button, Modal, TextInput, Group, Title, Paper, Stack, Badge } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
+import { ImportarContactos } from './ImportarContactos';
 
 interface Cliente {
     id: number;
@@ -185,7 +186,7 @@ export function GestionClientes() {
 
             <Group justify="space-between" mb="md">
                 <Title order={2}>Gestión de Clientes</Title>
-                <Button onClick={handleAbrirModalCrear}>Añadir Cliente</Button>
+                <Group><ImportarContactos kind="clientes" onImported={cargarClientes} /><Button onClick={handleAbrirModalCrear}>Añadir Cliente</Button></Group>
             </Group>
             <Table striped highlightOnHover withTableBorder>
                 <Table.Thead>

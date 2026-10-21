@@ -35,16 +35,24 @@ pub fn login(username: String, password: String, db: DbConn, session: State<Sess
     let conn = db.0.lock().map_err(|e| e.to_string())?;
 
     // 1. Buscamos al usuario por su nombre de usuario
-    let (id, password_hash, rol, activo, debe_cambiar_password): (i32, String, String, bool, bool) = conn
+    let account: Option<(i32, String, String, bool, bool)> = conn
         .query_row(
             "SELECT id, password_hash, rol, activo, debe_cambiar_password FROM usuarios WHERE username = ?1",
             params![username],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
         )
         .optional()
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| "Usuario o contraseña incorrectos".to_string())?;
+        .map_err(|e| e.to_string())?;
+    let Some((id, password_hash, rol, activo, debe_cambiar_password)) = account else {
+        if username.len() <= 64 {
+            auditoria::registrar_evento_interno(&conn, &username, "INICIO_SESION_FALLIDO", None)
+                .map_err(|e| e.to_string())?;
+        }
+        return Err("Usuario o contraseña incorrectos".into());
+    };
     if !activo {
+        auditoria::registrar_evento_interno(&conn, &username, "INICIO_SESION_FALLIDO", None)
+            .map_err(|e| e.to_string())?;
         return Err("Usuario o contraseña incorrectos".into());
     }
 
@@ -53,9 +61,11 @@ pub fn login(username: String, password: String, db: DbConn, session: State<Sess
         PasswordHash::new(&password_hash).map_err(|_| "Error interno del servidor".to_string())?;
 
     // 3. Verificamos que la contraseña proporcionada coincida con el hash
-    Argon2::default()
-        .verify_password(password.as_bytes(), &parsed_hash)
-        .map_err(|_| "Usuario o contraseña incorrectos".to_string())?;
+    if Argon2::default().verify_password(password.as_bytes(), &parsed_hash).is_err() {
+        auditoria::registrar_evento_interno(&conn, &username, "INICIO_SESION_FALLIDO", None)
+            .map_err(|e| e.to_string())?;
+        return Err("Usuario o contraseña incorrectos".into());
+    }
 
     // 4. Obtener permisos del rol
     let mut stmt_permisos = conn.prepare(

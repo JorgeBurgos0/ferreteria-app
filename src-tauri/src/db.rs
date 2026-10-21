@@ -25,7 +25,7 @@ fn ensure_column(
 pub fn inicializar(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    if version > 5 {
+    if version > 6 {
         return Err(rusqlite::Error::InvalidQuery);
     }
     conn.execute_batch("SAVEPOINT app_schema")?;
@@ -152,6 +152,15 @@ pub fn inicializar(conn: &Connection) -> Result<(), rusqlite::Error> {
             accion TEXT NOT NULL,
             detalles TEXT
         );
+        CREATE TABLE IF NOT EXISTS configuracion_local (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            respaldo_automatico INTEGER NOT NULL DEFAULT 0 CHECK (respaldo_automatico IN (0, 1)),
+            carpeta_respaldos TEXT NOT NULL DEFAULT '',
+            conservar_respaldos INTEGER NOT NULL DEFAULT 7,
+            retencion_bitacora_dias INTEGER NOT NULL DEFAULT 0,
+            ultimo_respaldo TEXT,
+            ultimo_error TEXT
+        );
         CREATE TABLE IF NOT EXISTS cortes_caja (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             fecha TEXT NOT NULL UNIQUE,
@@ -187,6 +196,7 @@ pub fn inicializar(conn: &Connection) -> Result<(), rusqlite::Error> {
     ensure_column(conn, "devoluciones", "reembolso_efectivo", "REAL")?;
     ensure_column(conn, "devoluciones", "reembolso_tarjeta", "REAL")?;
     conn.execute_batch("UPDATE clientes SET fecha_registro = COALESCE((SELECT MIN(substr(fecha_hora, 1, 10)) FROM ventas WHERE ventas.id_cliente = clientes.id), datetime('now','localtime')) WHERE fecha_registro IS NULL OR fecha_registro = ''")?;
+    conn.execute("INSERT OR IGNORE INTO configuracion_local (id) VALUES (1)", [])?;
     
     // Migraciones Phase 4: RBAC
     conn.execute_batch(
@@ -306,7 +316,7 @@ pub fn inicializar(conn: &Connection) -> Result<(), rusqlite::Error> {
              UPDATE datos_empresa SET telefono = '' WHERE telefono = '555-0000';"
         )?;
     }
-    conn.execute_batch("PRAGMA user_version = 5;")?;
+    conn.execute_batch("PRAGMA user_version = 6;")?;
     Ok(())
     })();
     match result {
@@ -330,7 +340,7 @@ mod tests {
         let enabled: i32 = conn.query_row("PRAGMA foreign_keys", [], |row| row.get(0)).unwrap();
         let version: i32 = conn.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
         assert_eq!(enabled, 1);
-        assert_eq!(version, 5);
+        assert_eq!(version, 6);
         let (direccion, telefono): (String, String) = conn.query_row(
             "SELECT direccion, telefono FROM datos_empresa WHERE id = 1", [],
             |row| Ok((row.get(0)?, row.get(1)?))

@@ -115,11 +115,13 @@ pub fn required_permission(command: &str) -> Result<Option<&'static str>, ()> {
         "agregar_producto" | "actualizar_producto" | "eliminar_producto" | "agregar_stock"
         | "importar_productos_masivos" | "verificar_skus" | "guardar_componentes_kit"
         | "obtener_componentes_kit" | "obtener_proveedores" | "agregar_proveedor"
+        | "previsualizar_proveedores" | "confirmar_proveedores"
         | "actualizar_proveedor" | "eliminar_proveedor" => Some("gestion_inventario"),
         "realizar_venta" => Some("realizar_venta"),
         "crear_cotizacion" | "obtener_cotizaciones" | "eliminar_cotizacion" => Some("gestionar_cotizaciones"),
         "buscar_venta_para_devolucion" | "procesar_devolucion" => Some("gestionar_devoluciones"),
         "agregar_cliente" | "actualizar_cliente" | "eliminar_cliente"
+        | "previsualizar_clientes" | "confirmar_clientes"
         | "obtener_historial_compras" => Some("gestionar_clientes"),
         "obtener_resumen_corte" | "guardar_corte" => Some("cerrar_caja"),
         "eliminar_corte" => Some("reabrir_caja"),
@@ -135,7 +137,7 @@ pub fn required_permission(command: &str) -> Result<Option<&'static str>, ()> {
         | "obtener_top_entidades" | "obtener_nuevos_clientes"
         | "guardar_widget_analytics" | "obtener_widgets_analytics"
         | "eliminar_widget_analytics" => Some("ver_dashboard"),
-        "crear_backup" => Some("gestionar_respaldos"),
+        "crear_backup" | "obtener_configuracion_local" | "guardar_configuracion_local" => Some("gestionar_respaldos"),
         "restaurar_backup" => Some("restaurar_respaldos"),
         "guardar_datos_empresa" => Some("editar_empresa"),
         "obtener_logs" => Some("ver_bitacora"),

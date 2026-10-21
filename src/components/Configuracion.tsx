@@ -1,4 +1,4 @@
-import { Button, Paper, Title, Text, Alert, Table, Modal, TextInput, PasswordInput, Select, Stack, Badge, Group, Tabs } from '@mantine/core';
+import { Button, Paper, Title, Text, Alert, Table, Modal, TextInput, PasswordInput, Select, Stack, Badge, Group, Tabs, Switch, NumberInput } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { save, open as openDialog } from '@tauri-apps/plugin-dialog';
 import { invoke } from '../lib/invoke';
@@ -35,6 +35,15 @@ interface ConfiguracionProps {
     permisos: string[];
 }
 
+interface BackupSettings {
+    enabled: boolean;
+    folder: string;
+    keep: number;
+    audit_days: number;
+    last_backup: string | null;
+    last_error: string | null;
+}
+
 export function Configuracion({ username, permisos }: ConfiguracionProps) {
     const canManageUsers = permisos.includes('gestionar_usuarios');
     const canEditCompany = permisos.includes('editar_empresa');
@@ -53,6 +62,7 @@ export function Configuracion({ username, permisos }: ConfiguracionProps) {
     const [nuevoRol, setNuevoRol] = useState<string | null>('vendedor');
     const [resetTarget, setResetTarget] = useState<Usuario | null>(null);
     const [resetPassword, setResetPassword] = useState('');
+    const [backupSettings, setBackupSettings] = useState<BackupSettings>({ enabled: false, folder: '', keep: 7, audit_days: 0, last_backup: null, last_error: null });
 
     // Estados para Auditoría
     const [logs, setLogs] = useState<LogAuditoria[]>([]);
@@ -72,6 +82,7 @@ export function Configuracion({ username, permisos }: ConfiguracionProps) {
     useEffect(() => {
         if (canManageUsers) cargarUsuarios();
         if (canEditCompany) cargarDatosEmpresa();
+        if (canBackup) invoke<BackupSettings>('obtener_configuracion_local').then(setBackupSettings).catch((reason) => setError(String(reason)));
     }, []);
 
     const cargarDatosEmpresa = async () => {
@@ -201,6 +212,17 @@ export function Configuracion({ username, permisos }: ConfiguracionProps) {
         } catch (err) {
             console.error("Error al crear el respaldo:", err);
             notifications.show({ title: 'Error', message: `Error al crear respaldo: ${err}`, color: 'red' });
+        }
+    };
+
+    const handleGuardarRespaldoAutomatico = async () => {
+        try {
+            await invoke('guardar_configuracion_local', { value: backupSettings });
+            setBackupSettings(await invoke<BackupSettings>('obtener_configuracion_local'));
+            notifications.show({ title: 'Configuración guardada', message: backupSettings.enabled ? 'Revisa la fecha del último respaldo en esta pantalla.' : 'Respaldos automáticos desactivados.', color: 'green' });
+        } catch (reason) {
+            invoke<BackupSettings>('obtener_configuracion_local').then(setBackupSettings).catch(() => {});
+            notifications.show({ title: 'No se pudo configurar el respaldo', message: String(reason), color: 'red' });
         }
     };
 
@@ -352,11 +374,30 @@ export function Configuracion({ username, permisos }: ConfiguracionProps) {
                             Restaurar Respaldo
                         </Button>}
                     </Group>
+                    {canBackup && <Stack mt="lg" maw={600}>
+                        <Title order={5}>Respaldo automático local</Title>
+                        <Text size="sm" c="dimmed">Al activarlo se crea una copia verificada; después se crea una al día mientras la aplicación esté abierta. Se conservan únicamente las copias automáticas más recientes.</Text>
+                        <Switch label="Activar respaldos automáticos" checked={backupSettings.enabled} onChange={(event) => setBackupSettings({ ...backupSettings, enabled: event.currentTarget.checked })} />
+                        <Group align="flex-end">
+                            <TextInput label="Carpeta local" value={backupSettings.folder} readOnly style={{ flex: 1 }} />
+                            <Button variant="light" onClick={async () => {
+                                const path = await openDialog({ directory: true, title: 'Seleccionar carpeta para respaldos' });
+                                if (typeof path === 'string') setBackupSettings({ ...backupSettings, folder: path });
+                            }}>Elegir carpeta</Button>
+                        </Group>
+                        <NumberInput label="Copias automáticas a conservar" min={1} max={30} value={backupSettings.keep} onChange={(value) => setBackupSettings({ ...backupSettings, keep: Number(value) || 1 })} />
+                        <Select label="Retención de bitácora" description="Antes de eliminar registros antiguos se guarda una copia verificada. Solo se aplica con respaldo automático activo." value={String(backupSettings.audit_days)} onChange={(value) => setBackupSettings({ ...backupSettings, audit_days: Number(value ?? 0) })} data={[{ value: '0', label: 'Conservar indefinidamente' }, { value: '90', label: '90 días' }, { value: '180', label: '180 días' }, { value: '365', label: '1 año' }, { value: '730', label: '2 años' }]} />
+                        <Button onClick={handleGuardarRespaldoAutomatico}>Guardar configuración</Button>
+                        <Text size="sm">Último respaldo automático: {backupSettings.last_backup ? new Date(backupSettings.last_backup).toLocaleString('es-MX') : 'ninguno'}</Text>
+                        {backupSettings.last_error && <Alert color="red" title="Último error de respaldo">{backupSettings.last_error}</Alert>}
+                        <Button variant="subtle" size="xs" onClick={() => invoke<BackupSettings>('obtener_configuracion_local').then(setBackupSettings).catch((reason) => setError(String(reason)))}>Actualizar estado</Button>
+                    </Stack>}
                 </Tabs.Panel>}
 
                 {canAudit && <Tabs.Panel value="auditoria">
                     <Title order={4} mb="sm">Bitácora de Eventos (Audit Log)</Title>
                     <Text size="sm" c="dimmed" mb="md">Registro de acciones críticas en el sistema.</Text>
+                    <Text size="sm" c="dimmed" mb="md">Se muestran hasta 1000 eventos del rango. La retención se configura en Respaldos.</Text>
 
                     <Group mb="md" align="flex-end">
                         <DatePickerInput

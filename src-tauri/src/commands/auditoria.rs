@@ -34,22 +34,24 @@ pub fn obtener_logs(
     fecha_fin: String,
     db: DbConn,
 ) -> Result<Vec<LogAuditoria>, String> {
+    let start = chrono::NaiveDate::parse_from_str(&fecha_inicio, "%Y-%m-%d")
+        .map_err(|_| "Fecha inicial inválida".to_string())?;
+    let end = chrono::NaiveDate::parse_from_str(&fecha_fin, "%Y-%m-%d")
+        .map_err(|_| "Fecha final inválida".to_string())?;
+    if end < start { return Err("El rango de fechas es inválido".into()); }
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-
-    let inicio = format!("{}T00:00:00", fecha_inicio);
-    let fin = format!("{}T23:59:59", fecha_fin);
 
     let mut stmt = conn
         .prepare(
             "SELECT id, fecha_hora, usuario, accion, detalles 
          FROM auditoria 
-         WHERE fecha_hora BETWEEN ?1 AND ?2 
-         ORDER BY fecha_hora DESC",
+         WHERE substr(fecha_hora, 1, 10) BETWEEN ?1 AND ?2
+         ORDER BY id DESC LIMIT 1000",
         )
         .map_err(|e| e.to_string())?;
 
     let logs_iter = stmt
-        .query_map(params![inicio, fin], |row| {
+        .query_map(params![fecha_inicio, fecha_fin], |row| {
             Ok(LogAuditoria {
                 id: row.get(0)?,
                 fecha_hora: row.get(1)?,

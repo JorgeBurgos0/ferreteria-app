@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { invoke } from '../lib/invoke';
 import { Table, Button, Modal, TextInput, Group, Title, Paper, Stack } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
+import { ImportarContactos } from './ImportarContactos';
 
 interface Proveedor {
     id: number;
@@ -136,7 +137,7 @@ export function GestionProveedores() {
             </Modal>
             <Group justify="space-between" mb="md">
                 <Title order={2}>Gestión de Proveedores</Title>
-                <Button onClick={handleAbrirModalCrear}>Añadir Proveedor</Button>
+                <Group><ImportarContactos kind="proveedores" onImported={cargarProveedores} /><Button onClick={handleAbrirModalCrear}>Añadir Proveedor</Button></Group>
             </Group>
             <Table striped highlightOnHover withTableBorder>
                 <Table.Thead>

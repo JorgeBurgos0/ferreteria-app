@@ -1,4 +1,4 @@
-use crate::commands::auditoria;
+use crate::commands::{auditoria, backups::{self, BackupSettings}};
 use crate::{auth::SessionState, db::DbConnection};
 use chrono::Local;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -123,6 +123,7 @@ pub fn restore_database(backup_path: &Path, conn_dest: &mut Connection, safety_p
         return Err("El respaldo no contiene usuarios".into());
     }
     let mut safety = Connection::open(safety_path).map_err(|e| e.to_string())?;
+    backups::protect_file(safety_path)?;
     {
         let backup = backup::Backup::new(&*conn_dest, &mut safety).map_err(|e| e.to_string())?;
         backup.step(-1).map_err(|e| e.to_string())?;
@@ -145,10 +146,13 @@ pub fn restore_database(backup_path: &Path, conn_dest: &mut Connection, safety_p
 
 #[tauri::command]
 pub fn restaurar_backup(ruta_backup: String, db: DbConn, app: AppHandle, session: State<SessionState>) -> Result<(), String> {
+    let actor = session.current_user()?.username;
     let mut conn_dest = db.0.lock().map_err(|e| e.to_string())?;
     let safety_path = app.path().app_data_dir().map_err(|e| e.to_string())?
         .join(format!("respaldo-previo-restauracion-{}.db", Local::now().timestamp_millis()));
     restore_database(Path::new(&ruta_backup), &mut conn_dest, &safety_path)?;
+    auditoria::registrar_evento_interno(&conn_dest, &actor, "RESTAURAR_BACKUP", Some("Restauración completada; copia de seguridad previa conservada"))
+        .map_err(|e| e.to_string())?;
     session.clear()?;
 
     Ok(())
@@ -157,30 +161,32 @@ pub fn restaurar_backup(ruta_backup: String, db: DbConn, app: AppHandle, session
 #[tauri::command]
 pub fn crear_backup(ruta_destino: String, db: DbConn, session: State<SessionState>) -> Result<(), String> {
     let usuario = session.current_user()?.username;
-    // 1. Lock the current database connection (Source)
     let conn_src = db.0.lock().map_err(|e| e.to_string())?;
-
-    // 2. Open connection to the destination file (will be created if not exists)
-    let dest_path = Path::new(&ruta_destino);
-    // Ensure parent dir exists? Usually handled by save dialog but good to check?
-    // Rusqlite open will create the file, but not parent dirs.
-    // We assume the path comes from a save dialog which ensures valid path.
-
-    let mut conn_dest = Connection::open(dest_path).map_err(|e| e.to_string())?;
-
-    // 3. Perform the backup (Backup from 'conn_src' TO 'conn_dest')
-    // backup::Backup::new(destination, destination_name, source, source_name)
-    // Destination is &mut conn_dest
-    // Source is &conn_src (DbConnection mutex guard behaves like &Connection)
-    let backup = backup::Backup::new(&conn_src, &mut conn_dest).map_err(|e| e.to_string())?;
-
-    // 4. Run step(-1) to copy everything
-    backup.step(-1).map_err(|e| e.to_string())?;
-
-    // 5. Audit Log
-    let detalles = format!("Creó respaldo en: {}", ruta_destino);
-    auditoria::registrar_evento_interno(&conn_src, &usuario, "CREAR_BACKUP", Some(&detalles))
+    backups::create_verified(&conn_src, Path::new(&ruta_destino))?;
+    auditoria::registrar_evento_interno(&conn_src, &usuario, "CREAR_BACKUP", Some("Respaldo manual verificado"))
         .map_err(|e| e.to_string())?;
+    Ok(())
+}
 
+#[tauri::command]
+pub fn obtener_configuracion_local(db: DbConn) -> Result<BackupSettings, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    backups::settings(&conn)
+}
+
+#[tauri::command]
+pub fn guardar_configuracion_local(value: BackupSettings, db: DbConn, session: State<SessionState>) -> Result<(), String> {
+    backups::validate_settings(&value)?;
+    let actor = session.current_user()?.username;
+    let mut conn = db.0.lock().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    tx.execute(
+        "UPDATE configuracion_local SET respaldo_automatico = ?1, carpeta_respaldos = ?2, conservar_respaldos = ?3, retencion_bitacora_dias = ?4, ultimo_error = CASE WHEN ?1 = 0 THEN NULL ELSE ultimo_error END WHERE id = 1",
+        params![value.enabled, value.folder, value.keep, value.audit_days],
+    ).map_err(|e| e.to_string())?;
+    auditoria::registrar_evento_interno(&tx, &actor, "CONFIGURAR_RESPALDOS", Some(&format!("automatico={}; conservar={}; retencion_bitacora_dias={}", value.enabled, value.keep, value.audit_days)))
+        .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    backups::run_automatic_recorded(&mut conn)?;
     Ok(())
 }
