@@ -25,7 +25,7 @@ fn ensure_column(
 pub fn inicializar(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    if version > 3 {
+    if version > 5 {
         return Err(rusqlite::Error::InvalidQuery);
     }
     conn.execute_batch("SAVEPOINT app_schema")?;
@@ -141,7 +141,9 @@ pub fn inicializar(conn: &Connection) -> Result<(), rusqlite::Error> {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT NOT NULL UNIQUE,
             password_hash TEXT NOT NULL,
-            rol TEXT NOT NULL
+            rol TEXT NOT NULL,
+            activo INTEGER NOT NULL DEFAULT 1 CHECK (activo IN (0, 1)),
+            debe_cambiar_password INTEGER NOT NULL DEFAULT 0 CHECK (debe_cambiar_password IN (0, 1))
         );
         CREATE TABLE IF NOT EXISTS auditoria (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -178,6 +180,8 @@ pub fn inicializar(conn: &Connection) -> Result<(), rusqlite::Error> {
     // Migraciones Phase 8: Advanced Analytics
     ensure_column(conn, "clientes", "fecha_registro", "TEXT")?;
     ensure_column(conn, "ventas", "id_usuario", "INTEGER")?;
+    ensure_column(conn, "usuarios", "activo", "INTEGER NOT NULL DEFAULT 1")?;
+    ensure_column(conn, "usuarios", "debe_cambiar_password", "INTEGER NOT NULL DEFAULT 0")?;
     ensure_column(conn, "ventas", "pago_efectivo", "REAL")?;
     ensure_column(conn, "ventas", "pago_tarjeta", "REAL")?;
     ensure_column(conn, "devoluciones", "reembolso_efectivo", "REAL")?;
@@ -215,15 +219,49 @@ pub fn inicializar(conn: &Connection) -> Result<(), rusqlite::Error> {
         INSERT OR IGNORE INTO permisos (clave, descripcion) VALUES ('ver_reportes', 'Ver reportes de ventas');
         INSERT OR IGNORE INTO permisos (clave, descripcion) VALUES ('configuracion', 'Acceso a configuración del sistema');
         INSERT OR IGNORE INTO permisos (clave, descripcion) VALUES ('gestionar_usuarios', 'Crear y eliminar usuarios');
-        
-        -- Asignar todos los permisos al Admin (id 1)
-        INSERT OR IGNORE INTO rol_permisos (id_rol, id_permiso) SELECT 1, id FROM permisos;
-
-        -- Asignar permisos básicos al Vendedor (id 2)
-        INSERT OR IGNORE INTO rol_permisos (id_rol, id_permiso) 
-        SELECT 2, id FROM permisos WHERE clave IN ('ver_dashboard', 'realizar_venta');
+        INSERT OR IGNORE INTO permisos (clave, descripcion) VALUES ('gestionar_cotizaciones', 'Crear y consultar cotizaciones');
+        INSERT OR IGNORE INTO permisos (clave, descripcion) VALUES ('gestionar_devoluciones', 'Procesar devoluciones');
+        INSERT OR IGNORE INTO permisos (clave, descripcion) VALUES ('cerrar_caja', 'Consultar y guardar cortes de caja');
+        INSERT OR IGNORE INTO permisos (clave, descripcion) VALUES ('reabrir_caja', 'Eliminar un corte de caja');
+        INSERT OR IGNORE INTO permisos (clave, descripcion) VALUES ('gestionar_clientes', 'Crear y modificar clientes');
+        INSERT OR IGNORE INTO permisos (clave, descripcion) VALUES ('gestionar_respaldos', 'Crear respaldos locales');
+        INSERT OR IGNORE INTO permisos (clave, descripcion) VALUES ('restaurar_respaldos', 'Restaurar la base de datos');
+        INSERT OR IGNORE INTO permisos (clave, descripcion) VALUES ('editar_empresa', 'Modificar los datos de la empresa');
+        INSERT OR IGNORE INTO permisos (clave, descripcion) VALUES ('ver_bitacora', 'Consultar la bitácora');
         "
     )?;
+
+    if version == 0 {
+        conn.execute_batch(
+            "INSERT OR IGNORE INTO rol_permisos (id_rol, id_permiso) SELECT 1, id FROM permisos;
+             INSERT OR IGNORE INTO rol_permisos (id_rol, id_permiso)
+             SELECT 2, id FROM permisos WHERE clave IN ('ver_dashboard', 'realizar_venta');"
+        )?;
+    }
+    if version < 4 {
+        conn.execute_batch(
+            "INSERT OR IGNORE INTO rol_permisos (id_rol, id_permiso)
+             SELECT rp.id_rol, target.id FROM rol_permisos rp
+             JOIN permisos source ON source.id = rp.id_permiso
+             CROSS JOIN permisos target
+             WHERE source.clave = 'realizar_venta' AND target.clave IN
+               ('gestionar_cotizaciones', 'gestionar_devoluciones', 'cerrar_caja', 'gestionar_clientes');
+             INSERT OR IGNORE INTO rol_permisos (id_rol, id_permiso)
+             SELECT rp.id_rol, target.id FROM rol_permisos rp
+             JOIN permisos source ON source.id = rp.id_permiso
+             CROSS JOIN permisos target
+             WHERE source.clave = 'configuracion' AND target.clave IN
+               ('reabrir_caja', 'gestionar_respaldos', 'restaurar_respaldos', 'editar_empresa', 'ver_bitacora');
+             DELETE FROM rol_permisos
+             WHERE id_permiso = (SELECT id FROM permisos WHERE clave = 'reabrir_caja')
+               AND id_rol NOT IN (
+                 SELECT rp.id_rol FROM rol_permisos rp
+                 JOIN permisos p ON p.id = rp.id_permiso WHERE p.clave = 'cerrar_caja'
+               );
+             DELETE FROM rol_permisos WHERE id_permiso IN (SELECT id FROM permisos WHERE clave = 'configuracion');
+             DELETE FROM permisos WHERE clave = 'configuracion';"
+        )?;
+    }
 
     // Migrar usuarios existentes para que 'rol' coincida con la nueva tabla (opcional o futuro refactor)
     // Por ahora el sistema usaba strings 'admin'/'vendedor'. La tabla 'usuarios' tiene columna 'rol' (TEXT).
@@ -268,7 +306,7 @@ pub fn inicializar(conn: &Connection) -> Result<(), rusqlite::Error> {
              UPDATE datos_empresa SET telefono = '' WHERE telefono = '555-0000';"
         )?;
     }
-    conn.execute_batch("PRAGMA user_version = 3;")?;
+    conn.execute_batch("PRAGMA user_version = 5;")?;
     Ok(())
     })();
     match result {
@@ -292,7 +330,7 @@ mod tests {
         let enabled: i32 = conn.query_row("PRAGMA foreign_keys", [], |row| row.get(0)).unwrap();
         let version: i32 = conn.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
         assert_eq!(enabled, 1);
-        assert_eq!(version, 3);
+        assert_eq!(version, 5);
         let (direccion, telefono): (String, String) = conn.query_row(
             "SELECT direccion, telefono FROM datos_empresa WHERE id = 1", [],
             |row| Ok((row.get(0)?, row.get(1)?))

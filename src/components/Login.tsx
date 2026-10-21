@@ -37,10 +37,10 @@ export function Login({ onLoginSuccess }: LoginProps) {
     try {
       const user = await invoke<UsuarioLogueado>('login', { username, password });
       setSessionToken(user.token);
-      setPassword('');
       if (user.requiere_cambio_password) {
         setPendingUser(user);
       } else {
+        setPassword('');
         onLoginSuccess(user);
       }
     } catch (reason) {
@@ -75,7 +75,8 @@ export function Login({ onLoginSuccess }: LoginProps) {
       return;
     }
     try {
-      await invoke('cambiar_password', { passwordNueva: newPassword });
+      await invoke('cambiar_password', { passwordActual: password, passwordNueva: newPassword });
+      setPassword('');
       setNewPassword('');
       setConfirmPassword('');
       if (pendingUser) {
@@ -106,7 +107,7 @@ export function Login({ onLoginSuccess }: LoginProps) {
         ) : pendingUser ? (
           <form onSubmit={handlePasswordChange}>
             <Stack>
-              <Text>Esta cuenta conserva la contraseña inicial conocida. Debes cambiarla para continuar.</Text>
+              <Text>Debes cambiar la contraseña inicial o temporal para continuar.</Text>
               <PasswordInput label="Contraseña nueva" value={newPassword} onChange={(event) => setNewPassword(event.currentTarget.value)} required minLength={12} />
               <PasswordInput label="Confirmar contraseña" value={confirmPassword} onChange={(event) => setConfirmPassword(event.currentTarget.value)} required minLength={12} />
               {error && <Alert icon={<IconAlertCircle size="1rem" />} color="red">{error}</Alert>}

@@ -1,9 +1,10 @@
 // src/components/LayoutPrincipal.tsx
-import { AppShell, NavLink, Title, Group, Text, UnstyledButton, Avatar, rem, Dialog, ActionIcon, useMantineColorScheme } from '@mantine/core';
+import { AppShell, NavLink, Title, Group, Text, UnstyledButton, Avatar, rem, Dialog, ActionIcon, Button, Modal, PasswordInput, Stack, useMantineColorScheme } from '@mantine/core';
 import { Outlet, Link } from 'react-router-dom';
 import { IconShoppingCart, IconArchive, IconReportAnalytics, IconUsers, IconSettings, IconHome, IconArrowBackUp, IconLogout, IconCash, IconAlertCircle, IconFileText, IconSun, IconMoon } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { invoke } from '../lib/invoke';
+import { notifications } from '@mantine/notifications';
 
 interface LayoutPrincipalProps {
   rol: string;
@@ -16,13 +17,19 @@ export function LayoutPrincipal({ rol, username, permisos, onLogout }: LayoutPri
   // const isAdmin = rol === 'admin'; // Ya no se usa basado en rol estático
   const canViewDashboard = permisos.includes('ver_dashboard');
   const canSell = permisos.includes('realizar_venta');
+  const canQuote = permisos.includes('gestionar_cotizaciones');
   const canManageInventory = permisos.includes('gestion_inventario');
   const canViewReports = permisos.includes('ver_reportes');
-  const canConfigure = permisos.includes('configuracion');
+  const canConfigure = ['gestionar_usuarios', 'editar_empresa', 'gestionar_respaldos', 'restaurar_respaldos', 'ver_bitacora'].some(permission => permisos.includes(permission));
   const canManageUsers = permisos.includes('gestionar_usuarios');
   const [stockAlertOpen, setStockAlertOpen] = useState(false);
   const [lowStockCount, setLowStockCount] = useState(0);
-  const [nombreEmpresa, setNombreEmpresa] = useState('Ferretería "El Tornillo de Oro"');
+  const [nombreEmpresa, setNombreEmpresa] = useState('Mi Ferretería');
+  const [passwordModalOpen, setPasswordModalOpen] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordError, setPasswordError] = useState<string | null>(null);
   const { colorScheme, toggleColorScheme } = useMantineColorScheme();
 
   useEffect(() => {
@@ -53,6 +60,28 @@ export function LayoutPrincipal({ rol, username, permisos, onLogout }: LayoutPri
     cargarDatosEmpresa();
   }, []);
 
+  const closePasswordModal = () => {
+    setPasswordModalOpen(false);
+    setCurrentPassword('');
+    setNewPassword('');
+    setConfirmPassword('');
+    setPasswordError(null);
+  };
+
+  const changePassword = async () => {
+    if (newPassword !== confirmPassword) {
+      setPasswordError('Las contraseñas nuevas no coinciden');
+      return;
+    }
+    try {
+      await invoke('cambiar_password', { passwordActual: currentPassword, passwordNueva: newPassword });
+      closePasswordModal();
+      notifications.show({ title: 'Contraseña actualizada', message: 'El cambio se guardó en este equipo.', color: 'green' });
+    } catch (error) {
+      setPasswordError(String(error));
+    }
+  };
+
   return (
     <AppShell
       header={{ height: 60 }}
@@ -78,7 +107,7 @@ export function LayoutPrincipal({ rol, username, permisos, onLogout }: LayoutPri
               leftSection={<IconHome size="1rem" />}
             />
           )}
-          {canSell && (
+          {(canSell || canQuote) && (
             <NavLink
               label="Punto de Venta"
               component={Link}
@@ -86,7 +115,7 @@ export function LayoutPrincipal({ rol, username, permisos, onLogout }: LayoutPri
               leftSection={<IconShoppingCart size="1rem" />}
             />
           )}
-          {canSell && (
+          {canQuote && (
             <NavLink
               label="Cotizaciones"
               component={Link}
@@ -112,7 +141,7 @@ export function LayoutPrincipal({ rol, username, permisos, onLogout }: LayoutPri
               leftSection={<IconReportAnalytics size="1rem" />}
             />
           )}
-          {canSell && (
+          {permisos.includes('cerrar_caja') && (
             <NavLink
               label="Corte de Caja"
               component={Link}
@@ -120,7 +149,7 @@ export function LayoutPrincipal({ rol, username, permisos, onLogout }: LayoutPri
               leftSection={<IconCash size="1rem" />}
             />
           )}
-          {canSell && (
+          {permisos.includes('gestionar_devoluciones') && (
             <NavLink
               label="Devoluciones"
               component={Link}
@@ -128,7 +157,7 @@ export function LayoutPrincipal({ rol, username, permisos, onLogout }: LayoutPri
               leftSection={<IconArrowBackUp size="1rem" />}
             />
           )}
-          {canSell && (
+          {permisos.includes('gestionar_clientes') && (
             <NavLink
               label="Clientes"
               component={Link}
@@ -180,6 +209,7 @@ export function LayoutPrincipal({ rol, username, permisos, onLogout }: LayoutPri
               <IconLogout style={{ width: rem(20), height: rem(20) }} stroke={1.5} />
             </UnstyledButton>
           </Group>
+          <Button mt="xs" size="compact-xs" variant="subtle" onClick={() => setPasswordModalOpen(true)}>Cambiar contraseña</Button>
         </div>
       </AppShell.Navbar>
 
@@ -209,6 +239,15 @@ export function LayoutPrincipal({ rol, username, permisos, onLogout }: LayoutPri
           </Group>
         </Dialog>
       </AppShell.Main>
+      <Modal opened={passwordModalOpen} onClose={closePasswordModal} title="Cambiar contraseña" centered>
+        <Stack>
+          <PasswordInput label="Contraseña actual" value={currentPassword} onChange={(event) => setCurrentPassword(event.currentTarget.value)} required />
+          <PasswordInput label="Contraseña nueva" description="Al menos 12 caracteres; no debe incluir tu usuario." value={newPassword} onChange={(event) => setNewPassword(event.currentTarget.value)} required minLength={12} />
+          <PasswordInput label="Confirmar contraseña nueva" value={confirmPassword} onChange={(event) => setConfirmPassword(event.currentTarget.value)} required minLength={12} />
+          {passwordError && <Text c="red" size="sm">{passwordError}</Text>}
+          <Button onClick={changePassword}>Guardar contraseña</Button>
+        </Stack>
+      </Modal>
     </AppShell>
   );
 }

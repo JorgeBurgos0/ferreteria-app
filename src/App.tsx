@@ -34,13 +34,18 @@ function App() {
     return <Login onLoginSuccess={setUsuario} />;
   }
 
-  const defaultRoute = usuario.permisos.includes('ver_dashboard') ? '/'
-    : usuario.permisos.includes('realizar_venta') ? '/punto-venta'
-      : usuario.permisos.includes('ver_reportes') ? '/reportes'
-        : usuario.permisos.includes('gestion_inventario') ? '/inventario'
-          : usuario.permisos.includes('configuracion') ? '/configuracion'
-            : usuario.permisos.includes('gestionar_usuarios') ? '/roles'
-              : null;
+  const has = (permission: string) => usuario.permisos.includes(permission);
+  const canConfigure = ['gestionar_usuarios', 'editar_empresa', 'gestionar_respaldos', 'restaurar_respaldos', 'ver_bitacora'].some(has);
+
+  const defaultRoute = has('ver_dashboard') ? '/'
+    : has('realizar_venta') || has('gestionar_cotizaciones') ? '/punto-venta'
+      : has('gestionar_devoluciones') ? '/devoluciones'
+        : has('cerrar_caja') ? '/corte-caja'
+          : has('gestionar_clientes') ? '/clientes'
+            : has('ver_reportes') ? '/reportes'
+              : has('gestion_inventario') ? '/inventario'
+                : canConfigure ? '/configuracion'
+                  : null;
 
   // Si hay un usuario, mostramos la aplicación principal con sus rutas.
   return (
@@ -53,19 +58,19 @@ function App() {
             setUsuario(null);
           });
         }} />}>
-          <Route index element={usuario.permisos.includes('ver_dashboard') ? <Dashboard canSell={usuario.permisos.includes('realizar_venta')} canManageInventory={usuario.permisos.includes('gestion_inventario')} /> : defaultRoute ? <Navigate to={defaultRoute} replace /> : <div>Tu cuenta no tiene permisos asignados.</div>} />
-          <Route path="punto-venta" element={usuario.permisos.includes('realizar_venta') ? <PuntoDeVenta userId={usuario.id} /> : <Navigate to="/" replace />} />
-          <Route path="cotizaciones" element={usuario.permisos.includes('realizar_venta') ? <Cotizaciones /> : <Navigate to="/" replace />} />
-          <Route path="reportes" element={usuario.permisos.includes('ver_reportes') ? <Reportes /> : <Navigate to="/" replace />} />
-          <Route path="devoluciones" element={usuario.permisos.includes('realizar_venta') ? <GestionDevoluciones /> : <Navigate to="/" replace />} />
-          <Route path="corte-caja" element={usuario.permisos.includes('realizar_venta') ? <CorteCaja username={usuario.username} rol={usuario.rol} /> : <Navigate to={defaultRoute ?? '/'} replace />} />
-          <Route path="clientes" element={usuario.permisos.includes('realizar_venta') ? <GestionClientes /> : <Navigate to="/" replace />} />
+          <Route index element={has('ver_dashboard') ? <Dashboard canSell={has('realizar_venta')} canManageInventory={has('gestion_inventario')} /> : defaultRoute ? <Navigate to={defaultRoute} replace /> : <div>Tu cuenta no tiene permisos asignados.</div>} />
+          <Route path="punto-venta" element={has('realizar_venta') || has('gestionar_cotizaciones') ? <PuntoDeVenta userId={usuario.id} canSell={has('realizar_venta')} canQuote={has('gestionar_cotizaciones')} /> : <Navigate to="/" replace />} />
+          <Route path="cotizaciones" element={has('gestionar_cotizaciones') ? <Cotizaciones /> : <Navigate to="/" replace />} />
+          <Route path="reportes" element={has('ver_reportes') ? <Reportes /> : <Navigate to="/" replace />} />
+          <Route path="devoluciones" element={has('gestionar_devoluciones') ? <GestionDevoluciones /> : <Navigate to="/" replace />} />
+          <Route path="corte-caja" element={has('cerrar_caja') ? <CorteCaja username={usuario.username} canReopen={has('reabrir_caja')} /> : <Navigate to={defaultRoute ?? '/'} replace />} />
+          <Route path="clientes" element={has('gestionar_clientes') ? <GestionClientes /> : <Navigate to="/" replace />} />
 
           {/* Rutas protegidas */}
-          <Route path="inventario" element={usuario.permisos.includes('gestion_inventario') ? <GestionInventario username={usuario.username} /> : <Navigate to="/" replace />} />
-          <Route path="proveedores" element={usuario.permisos.includes('gestion_inventario') ? <GestionProveedores /> : <Navigate to="/" replace />} />
-          <Route path="configuracion" element={usuario.permisos.includes('configuracion') ? <Configuracion username={usuario.username} /> : <Navigate to="/" replace />} />
-          <Route path="roles" element={usuario.permisos.includes('gestionar_usuarios') ? <GestionRoles /> : <Navigate to="/" replace />} />
+          <Route path="inventario" element={has('gestion_inventario') ? <GestionInventario username={usuario.username} /> : <Navigate to="/" replace />} />
+          <Route path="proveedores" element={has('gestion_inventario') ? <GestionProveedores /> : <Navigate to="/" replace />} />
+          <Route path="configuracion" element={canConfigure ? <Configuracion username={usuario.username} permisos={usuario.permisos} /> : <Navigate to="/" replace />} />
+          <Route path="roles" element={has('gestionar_usuarios') ? <GestionRoles /> : <Navigate to="/" replace />} />
         </Route>
       </Routes>
       </Suspense>

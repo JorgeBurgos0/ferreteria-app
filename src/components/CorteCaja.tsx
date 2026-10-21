@@ -27,7 +27,7 @@ interface ResumenCorte {
     corte_existente: CorteCajaData | null;
 }
 
-export function CorteCaja({ username, rol }: { username: string; rol?: string }) {
+export function CorteCaja({ username, canReopen }: { username: string; canReopen: boolean }) {
     const [fecha, setFecha] = useState<Date | null>(new Date());
     const [resumen, setResumen] = useState<ResumenCorte | null>(null);
     const [contadoEfectivo, setContadoEfectivo] = useState<number | ''>('');
@@ -81,7 +81,7 @@ export function CorteCaja({ username, rol }: { username: string; rol?: string })
         }
         if (!resumen || !fecha) return;
 
-        if (confirm("¿Estás seguro de finalizar el corte? Esta acción NO se puede deshacer.")) {
+        if (confirm("¿Estás seguro de finalizar el corte? Reabrirlo requiere un permiso especial.")) {
             try {
                 const anio = fecha.getFullYear();
                 const mes = (fecha.getMonth() + 1).toString().padStart(2, '0');
@@ -221,9 +221,9 @@ export function CorteCaja({ username, rol }: { username: string; rol?: string })
                         Imprimir Reporte
                     </Button>
 
-                    {rol === 'admin' && (
+                    {canReopen && (
                         <Button color="red" variant="subtle" onClick={handleReabrirCorte}>
-                            Reabrir Turno (Solo Admin)
+                            Reabrir Turno
                         </Button>
                     )}
                 </Stack>

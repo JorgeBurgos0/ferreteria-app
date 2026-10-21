@@ -35,9 +35,11 @@ interface DatosEmpresa {
 
 interface PuntoDeVentaProps {
     userId?: number;
+    canSell: boolean;
+    canQuote: boolean;
 }
 
-export function PuntoDeVenta({ userId }: PuntoDeVentaProps) {
+export function PuntoDeVenta({ userId, canSell, canQuote }: PuntoDeVentaProps) {
     const [productos, setProductos] = useState<Producto[]>([]);
     const [carrito, setCarrito] = useState<ItemCarrito[]>([]);
     const [total, setTotal] = useState(0);
@@ -377,17 +379,17 @@ export function PuntoDeVenta({ userId }: PuntoDeVentaProps) {
                 <Group justify="space-between" mt="xl">
                     <Title order={3}>Total: ${total.toFixed(2)}</Title>
                     <Group>
-                        <Button leftSection={<IconFileText size="1rem" />} variant="light" color="blue" onClick={handleGuardarCotizacion}>
+                        {canQuote && <Button leftSection={<IconFileText size="1rem" />} variant="light" color="blue" onClick={handleGuardarCotizacion}>
                             Guardar Cotización
-                        </Button>
+                        </Button>}
                         {datosUltimaVenta && (
                             <Button leftSection={<IconPrinter size="1rem" />} variant="outline" onClick={handleImprimirTicket}>
                                 Imprimir Último Ticket
                             </Button>
                         )}
-                        <Button leftSection={<IconShoppingCart size="1rem" />} size="md" onClick={handleAbrirModalPago}>
+                        {canSell && <Button leftSection={<IconShoppingCart size="1rem" />} size="md" onClick={handleAbrirModalPago}>
                             Cobrar
-                        </Button>
+                        </Button>}
                     </Group>
                 </Group>
             </Paper>

@@ -26,6 +26,7 @@ pub struct Usuario {
     id: i32,
     username: String,
     rol: String,
+    activo: bool,
     permisos: Vec<String>,
 }
 
@@ -34,15 +35,18 @@ pub fn login(username: String, password: String, db: DbConn, session: State<Sess
     let conn = db.0.lock().map_err(|e| e.to_string())?;
 
     // 1. Buscamos al usuario por su nombre de usuario
-    let (id, password_hash, rol): (i32, String, String) = conn
+    let (id, password_hash, rol, activo, debe_cambiar_password): (i32, String, String, bool, bool) = conn
         .query_row(
-            "SELECT id, password_hash, rol FROM usuarios WHERE username = ?1",
+            "SELECT id, password_hash, rol, activo, debe_cambiar_password FROM usuarios WHERE username = ?1",
             params![username],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
         )
         .optional()
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "Usuario o contraseña incorrectos".to_string())?;
+    if !activo {
+        return Err("Usuario o contraseña incorrectos".into());
+    }
 
     // 2. Parseamos el hash guardado en la base de datos
     let parsed_hash =
@@ -72,7 +76,7 @@ pub fn login(username: String, password: String, db: DbConn, session: State<Sess
     }
 
     // 5. Si todo es correcto, devolvemos los datos del usuario con sus permisos
-    let requiere_cambio_password = username == "admin" && password == "admin";
+    let requiere_cambio_password = debe_cambiar_password || username == "admin" && password == "admin";
     auditoria::registrar_evento_interno(&conn, &username, "INICIO_SESION", None)
         .map_err(|e| e.to_string())?;
     let token = session.start(id, username.clone(), permisos.clone(), requiere_cambio_password)?;
@@ -121,17 +125,27 @@ pub fn crear_usuario_inicial(password: String, db: DbConn) -> Result<(), String>
 }
 
 #[tauri::command]
-pub fn cambiar_password(password_nueva: String, db: DbConn, session: State<SessionState>) -> Result<(), String> {
+pub fn cambiar_password(password_actual: String, password_nueva: String, db: DbConn, session: State<SessionState>) -> Result<(), String> {
     let current = session.current_user()?;
     validar_password(&password_nueva, &current.username)?;
+    let mut conn = db.0.lock().map_err(|e| e.to_string())?;
+    let previous_hash: String = conn.query_row(
+        "SELECT password_hash FROM usuarios WHERE id = ?1", params![current.user_id], |row| row.get(0),
+    ).map_err(|e| e.to_string())?;
+    let parsed = PasswordHash::new(&previous_hash).map_err(|_| "Contraseña guardada inválida")?;
+    Argon2::default().verify_password(password_actual.as_bytes(), &parsed)
+        .map_err(|_| "La contraseña actual es incorrecta".to_string())?;
     let salt = SaltString::generate(&mut OsRng);
     let hash = Argon2::default()
         .hash_password(password_nueva.as_bytes(), &salt)
         .map_err(|_| "No se pudo proteger la contraseña".to_string())?
         .to_string();
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    conn.execute("UPDATE usuarios SET password_hash = ?1 WHERE id = ?2", params![hash, current.user_id])
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    tx.execute("UPDATE usuarios SET password_hash = ?1, debe_cambiar_password = 0 WHERE id = ?2", params![hash, current.user_id])
         .map_err(|e| e.to_string())?;
+    auditoria::registrar_evento_interno(&tx, &current.username, "CAMBIAR_PASSWORD", None)
+        .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
     session.password_changed()?;
     Ok(())
 }
@@ -145,7 +159,7 @@ pub fn logout(session: State<SessionState>) -> Result<(), String> {
 pub fn obtener_usuarios(db: DbConn) -> Result<Vec<Usuario>, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
-        .prepare("SELECT id, username, rol FROM usuarios")
+        .prepare("SELECT id, username, rol, activo FROM usuarios")
         .map_err(|e| e.to_string())?;
 
     let usuarios_iter = stmt
@@ -154,6 +168,7 @@ pub fn obtener_usuarios(db: DbConn) -> Result<Vec<Usuario>, String> {
                 id: row.get(0)?,
                 username: row.get(1)?,
                 rol: row.get(2)?,
+                activo: row.get(3)?,
                 permisos: Vec::new(), // Por defecto vacío en lista simple
             })
         })
@@ -195,7 +210,7 @@ pub fn crear_usuario(
 
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     tx.execute(
-        "INSERT INTO usuarios (username, password_hash, rol) VALUES (?1, ?2, ?3)",
+        "INSERT INTO usuarios (username, password_hash, rol, debe_cambiar_password) VALUES (?1, ?2, ?3, 1)",
         params![username, password_hash, rol],
     )
     .map_err(|e| e.to_string())?;
@@ -213,13 +228,13 @@ pub fn eliminar_usuario(id: i32, db: DbConn, session: State<SessionState>) -> Re
         return Err("No puedes eliminar tu cuenta activa".into());
     }
     let mut conn = db.0.lock().map_err(|e| e.to_string())?;
-    let is_admin: bool = conn.query_row(
-        "SELECT LOWER(rol) = 'admin' FROM usuarios WHERE id = ?1",
-        params![id], |row| row.get(0),
-    ).optional().map_err(|e| e.to_string())?.unwrap_or(false);
-    if is_admin {
+    let (is_admin, is_active): (bool, bool) = conn.query_row(
+        "SELECT LOWER(rol) = 'admin', activo FROM usuarios WHERE id = ?1",
+        params![id], |row| Ok((row.get(0)?, row.get(1)?)),
+    ).optional().map_err(|e| e.to_string())?.ok_or("Usuario no encontrado")?;
+    if is_admin && is_active {
         let admins: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM usuarios WHERE LOWER(rol) = 'admin'", [], |row| row.get(0),
+            "SELECT COUNT(*) FROM usuarios WHERE LOWER(rol) = 'admin' AND activo = 1", [], |row| row.get(0),
         ).map_err(|e| e.to_string())?;
         if admins <= 1 {
             return Err("No se puede eliminar el último administrador".to_string());
@@ -230,6 +245,61 @@ pub fn eliminar_usuario(id: i32, db: DbConn, session: State<SessionState>) -> Re
         .map_err(|e| e.to_string())?;
     let details = format!("usuario_id={id}");
     auditoria::registrar_evento_interno(&tx, &actor.username, "ELIMINAR_USUARIO", Some(&details))
+        .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn actualizar_estado_usuario(id: i32, activo: bool, db: DbConn, session: State<SessionState>) -> Result<(), String> {
+    let actor = session.current_user()?;
+    if id == actor.user_id && !activo {
+        return Err("No puedes desactivar tu cuenta activa".into());
+    }
+    let mut conn = db.0.lock().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let role: String = tx.query_row("SELECT rol FROM usuarios WHERE id = ?1", params![id], |row| row.get(0))
+        .map_err(|_| "Usuario no encontrado".to_string())?;
+    if !activo && role.eq_ignore_ascii_case("admin") {
+        let active_admins: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM usuarios WHERE LOWER(rol) = 'admin' AND activo = 1",
+            [], |row| row.get(0),
+        ).map_err(|e| e.to_string())?;
+        if active_admins <= 1 {
+            return Err("No se puede desactivar el último administrador activo".into());
+        }
+    }
+    tx.execute("UPDATE usuarios SET activo = ?1 WHERE id = ?2", params![activo, id])
+        .map_err(|e| e.to_string())?;
+    let details = format!("usuario_id={id}; activo={activo}");
+    auditoria::registrar_evento_interno(&tx, &actor.username, "ESTADO_USUARIO", Some(&details))
+        .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn restablecer_password_usuario(id: i32, password_nueva: String, db: DbConn, session: State<SessionState>) -> Result<(), String> {
+    let actor = session.current_user()?;
+    if id == actor.user_id {
+        return Err("Usa el cambio de contraseña de tu propia cuenta".into());
+    }
+    let mut conn = db.0.lock().map_err(|e| e.to_string())?;
+    let username: String = conn.query_row("SELECT username FROM usuarios WHERE id = ?1", params![id], |row| row.get(0))
+        .map_err(|_| "Usuario no encontrado".to_string())?;
+    validar_password(&password_nueva, &username)?;
+    let salt = SaltString::generate(&mut OsRng);
+    let hash = Argon2::default()
+        .hash_password(password_nueva.as_bytes(), &salt)
+        .map_err(|_| "No se pudo proteger la contraseña".to_string())?
+        .to_string();
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    tx.execute(
+        "UPDATE usuarios SET password_hash = ?1, debe_cambiar_password = 1 WHERE id = ?2",
+        params![hash, id],
+    ).map_err(|e| e.to_string())?;
+    let details = format!("usuario_id={id}");
+    auditoria::registrar_evento_interno(&tx, &actor.username, "RESTABLECER_PASSWORD", Some(&details))
         .map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
     Ok(())
@@ -292,28 +362,41 @@ pub fn obtener_permisos_rol(db: DbConn, id_rol: i32) -> Result<Vec<String>, Stri
 
 #[tauri::command]
 pub fn guardar_permisos_rol(db: DbConn, id_rol: i32, permisos: Vec<String>, session: State<SessionState>) -> Result<(), String> {
+    if permisos.iter().any(|p| p == "reabrir_caja") && !permisos.iter().any(|p| p == "cerrar_caja") {
+        return Err("Para reabrir caja también se necesita acceso al corte".into());
+    }
     if id_rol == 1 && (!permisos.iter().any(|p| p == "gestionar_usuarios")
-        || !permisos.iter().any(|p| p == "configuracion")) {
-        return Err("El rol Admin debe conservar usuarios y configuración".into());
+        || !permisos.iter().any(|p| p == "restaurar_respaldos")) {
+        return Err("El rol Admin debe conservar gestión de usuarios y restauración".into());
     }
     let actor = session.current_user()?.username;
     let mut conn = db.0.lock().map_err(|e| e.to_string())?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
 
-    // Limpiar permisos actuales
-    tx.execute("DELETE FROM rol_permisos WHERE id_rol = ?1", params![id_rol]).map_err(|e| e.to_string())?;
+    let role_exists: i64 = tx.query_row("SELECT COUNT(*) FROM roles WHERE id = ?1", params![id_rol], |row| row.get(0))
+        .map_err(|e| e.to_string())?;
+    if role_exists != 1 {
+        return Err("El rol no existe".into());
+    }
 
-    // Insertar nuevos
-    for clave in permisos {
-        // Buscar ID del permiso por clave
-        let id_permiso: Option<i32> = tx.query_row("SELECT id FROM permisos WHERE clave = ?1", params![clave], |row| row.get(0)).optional().map_err(|e| e.to_string())?;
-        
-        if let Some(id) = id_permiso {
-            tx.execute("INSERT INTO rol_permisos (id_rol, id_permiso) VALUES (?1, ?2)", params![id_rol, id]).map_err(|e| e.to_string())?;
+    let mut validated = Vec::with_capacity(permisos.len());
+    for clave in &permisos {
+        let id: i32 = tx.query_row("SELECT id FROM permisos WHERE clave = ?1", params![clave], |row| row.get(0))
+            .map_err(|_| format!("Permiso desconocido: {clave}"))?;
+        if !validated.contains(&id) {
+            validated.push(id);
         }
     }
 
-    let details = format!("rol_id={id_rol}");
+    // Limpiar permisos actuales
+    tx.execute("DELETE FROM rol_permisos WHERE id_rol = ?1", params![id_rol]).map_err(|e| e.to_string())?;
+
+    for id in validated {
+        tx.execute("INSERT INTO rol_permisos (id_rol, id_permiso) VALUES (?1, ?2)", params![id_rol, id])
+            .map_err(|e| e.to_string())?;
+    }
+
+    let details = format!("rol_id={id_rol}; permisos={}", permisos.join(","));
     auditoria::registrar_evento_interno(&tx, &actor, "CAMBIAR_PERMISOS", Some(&details))
         .map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;

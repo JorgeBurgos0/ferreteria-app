@@ -142,11 +142,20 @@ pub fn guardar_corte(
 }
 
 #[tauri::command]
-pub fn eliminar_corte(fecha: String, db: DbConn) -> Result<(), String> {
+pub fn eliminar_corte(fecha: String, db: DbConn, session: State<SessionState>) -> Result<(), String> {
     let fecha = clean_date(&fecha)?;
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM cortes_caja WHERE REPLACE(fecha, ' ', '') = ?1", params![fecha])
+    let actor = session.current_user()?.username;
+    let mut conn = db.0.lock().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let deleted = tx.execute("DELETE FROM cortes_caja WHERE REPLACE(fecha, ' ', '') = ?1", params![fecha])
         .map_err(|e| e.to_string())?;
+    if deleted == 0 {
+        return Err("No existe un corte para esa fecha".into());
+    }
+    let details = format!("fecha={fecha}");
+    auditoria::registrar_evento_interno(&tx, &actor, "REABRIR_CAJA", Some(&details))
+        .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
     Ok(())
 }
 

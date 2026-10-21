@@ -1,4 +1,4 @@
-use ferreteria_app::{auth::{required_permission, SessionState}, commands::{configuracion::restore_database, corte_caja::totals}, db};
+use ferreteria_app::{auth::{required_permission, user_still_allowed, SessionState}, commands::{configuracion::restore_database, corte_caja::totals}, db};
 use rusqlite::{params, Connection};
 use std::{fs, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
 
@@ -14,12 +14,15 @@ fn permissions_reject_other_roles_and_invalidate_old_sessions() {
     let state = SessionState::default();
     let seller = state.start(2, "vendedor".into(), vec!["realizar_venta".into()], false).unwrap();
     assert!(state.authorize(&seller, required_permission("realizar_venta").unwrap()));
+    for command in ["procesar_devolucion", "guardar_corte", "crear_cotizacion", "agregar_cliente", "crear_backup", "guardar_datos_empresa", "obtener_logs"] {
+        assert!(!state.authorize(&seller, required_permission(command).unwrap()), "{command}");
+    }
     assert!(!state.authorize(&seller, required_permission("restaurar_backup").unwrap()));
     assert!(!state.authorize(&seller, required_permission("agregar_producto").unwrap()));
     assert!(!state.authorize("", None));
     assert!(required_permission("comando_inexistente").is_err());
 
-    let admin = state.start(1, "admin".into(), vec!["configuracion".into()], true).unwrap();
+    let admin = state.start(1, "admin".into(), vec!["restaurar_respaldos".into()], true).unwrap();
     assert!(!state.authorize(&seller, None));
     assert!(!state.authorize(&admin, required_permission("restaurar_backup").unwrap()));
     assert!(state.authorize(&admin, required_permission("cambiar_password").unwrap()));
@@ -27,6 +30,62 @@ fn permissions_reject_other_roles_and_invalidate_old_sessions() {
     assert!(state.authorize(&admin, required_permission("restaurar_backup").unwrap()));
     state.clear().unwrap();
     assert!(!state.authorize(&admin, None));
+}
+
+#[test]
+fn migrated_roles_keep_access_and_revocations_survive_restart() {
+    let conn = Connection::open_in_memory().unwrap();
+    db::inicializar(&conn).unwrap();
+    conn.execute("INSERT INTO permisos (clave) VALUES ('configuracion')", []).unwrap();
+    conn.execute(
+        "INSERT INTO rol_permisos (id_rol, id_permiso) SELECT 2, id FROM permisos WHERE clave = 'configuracion'",
+        [],
+    ).unwrap();
+    conn.execute(
+        "DELETE FROM rol_permisos WHERE id_rol = 2 AND id_permiso IN
+         (SELECT id FROM permisos WHERE clave IN ('gestionar_devoluciones', 'cerrar_caja', 'gestionar_cotizaciones', 'gestionar_clientes', 'gestionar_respaldos', 'restaurar_respaldos', 'editar_empresa', 'ver_bitacora', 'reabrir_caja'))",
+        [],
+    ).unwrap();
+    conn.execute_batch("PRAGMA user_version = 3").unwrap();
+    db::inicializar(&conn).unwrap();
+    let restored: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM rol_permisos rp JOIN permisos p ON p.id = rp.id_permiso
+         WHERE rp.id_rol = 2 AND p.clave IN ('gestionar_devoluciones', 'cerrar_caja', 'restaurar_respaldos')",
+        [], |row| row.get(0),
+    ).unwrap();
+    assert_eq!(restored, 3);
+    let obsolete: i64 = conn.query_row("SELECT COUNT(*) FROM permisos WHERE clave = 'configuracion'", [], |row| row.get(0)).unwrap();
+    assert_eq!(obsolete, 0);
+
+    conn.execute(
+        "DELETE FROM rol_permisos WHERE id_rol = 2 AND id_permiso = (SELECT id FROM permisos WHERE clave = 'cerrar_caja')",
+        [],
+    ).unwrap();
+    db::inicializar(&conn).unwrap();
+    let revived: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM rol_permisos rp JOIN permisos p ON p.id = rp.id_permiso
+         WHERE rp.id_rol = 2 AND p.clave = 'cerrar_caja'",
+        [], |row| row.get(0),
+    ).unwrap();
+    assert_eq!(revived, 0);
+}
+
+#[test]
+fn database_revocation_and_account_status_take_effect_immediately() {
+    let conn = Connection::open_in_memory().unwrap();
+    db::inicializar(&conn).unwrap();
+    conn.execute("INSERT INTO usuarios (id, username, password_hash, rol) VALUES (2, 'seller', 'test', 'vendedor')", []).unwrap();
+    assert!(user_still_allowed(&conn, 2, Some("realizar_venta")));
+    conn.execute(
+        "DELETE FROM rol_permisos WHERE id_rol = 2 AND id_permiso = (SELECT id FROM permisos WHERE clave = 'realizar_venta')",
+        [],
+    ).unwrap();
+    assert!(!user_still_allowed(&conn, 2, Some("realizar_venta")));
+    conn.execute("UPDATE usuarios SET debe_cambiar_password = 1 WHERE id = 2", []).unwrap();
+    assert!(!user_still_allowed(&conn, 2, None));
+    assert!(user_still_allowed(&conn, 2, Some("cambiar_password")));
+    conn.execute("UPDATE usuarios SET activo = 0 WHERE id = 2", []).unwrap();
+    assert!(!user_still_allowed(&conn, 2, Some("cambiar_password")));
 }
 
 #[test]
@@ -70,7 +129,7 @@ fn restore_replaces_data_and_rejects_unrelated_database() {
     active.execute("INSERT INTO productos (sku, nombre, precio_venta, stock_actual) VALUES ('SKU-3', 'Conservar', 1, 1)", []).unwrap();
     assert!(restore_database(&future_schema, &mut active, &safety_after_failure).is_err());
     assert_eq!(active.query_row("SELECT COUNT(*) FROM productos WHERE sku = 'SKU-3'", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
-    assert_eq!(active.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(), 3);
+    assert_eq!(active.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(), 5);
     drop(active);
     fs::remove_dir_all(dir).unwrap();
 }

@@ -37,6 +37,8 @@ fn main() {
             commands::seguridad::obtener_usuarios,
             commands::seguridad::crear_usuario,
             commands::seguridad::eliminar_usuario,
+            commands::seguridad::actualizar_estado_usuario,
+            commands::seguridad::restablecer_password_usuario,
             commands::seguridad::obtener_roles,
             commands::seguridad::obtener_permisos_rol,
             commands::seguridad::guardar_permisos_rol,
@@ -98,11 +100,22 @@ fn main() {
                     .get("x-session-token")
                     .and_then(|value| value.to_str().ok())
                     .unwrap_or("");
-                invoke
-                    .message
-                    .webview_ref()
-                    .state::<auth::SessionState>()
-                    .authorize(token, permission)
+                let webview = invoke.message.webview_ref();
+                let session = webview.state::<auth::SessionState>();
+                if !session.authorize(token, permission) {
+                    return false;
+                }
+                if permission == Some("logout") {
+                    return true;
+                }
+                let Ok(current) = session.current_user() else {
+                    return false;
+                };
+                let db = webview.state::<db::DbConnection>();
+                let Ok(conn) = db.0.lock() else {
+                    return false;
+                };
+                auth::user_still_allowed(&conn, current.user_id, permission)
             });
             if authorized {
                 commands(invoke)

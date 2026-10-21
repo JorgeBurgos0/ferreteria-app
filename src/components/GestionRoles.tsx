@@ -13,9 +13,17 @@ interface Rol {
 const PERMISOS_DISPONIBLES = [
     { value: 'ver_dashboard', label: 'Ver Dashboard' },
     { value: 'gestion_inventario', label: 'Gestión de Inventario (Productos/Proveedores)' },
-    { value: 'realizar_venta', label: 'Punto de Venta / Caja' },
+    { value: 'realizar_venta', label: 'Cobrar ventas' },
+    { value: 'gestionar_cotizaciones', label: 'Crear y consultar cotizaciones' },
+    { value: 'gestionar_devoluciones', label: 'Procesar devoluciones' },
+    { value: 'cerrar_caja', label: 'Cerrar caja' },
+    { value: 'reabrir_caja', label: 'Reabrir caja' },
+    { value: 'gestionar_clientes', label: 'Gestionar clientes' },
     { value: 'ver_reportes', label: 'Ver Reportes' },
-    { value: 'configuracion', label: 'Configuración del Sistema' },
+    { value: 'editar_empresa', label: 'Editar datos de empresa' },
+    { value: 'gestionar_respaldos', label: 'Crear respaldos' },
+    { value: 'restaurar_respaldos', label: 'Restaurar respaldos' },
+    { value: 'ver_bitacora', label: 'Consultar bitácora' },
     { value: 'gestionar_usuarios', label: 'Gestionar Usuarios y Roles' },
 ];
 

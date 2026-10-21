@@ -12,6 +12,7 @@ interface Usuario {
     id: number;
     username: string;
     rol: string;
+    activo: boolean;
 }
 
 interface LogAuditoria {
@@ -31,9 +32,16 @@ interface DatosEmpresa {
 
 interface ConfiguracionProps {
     username: string;
+    permisos: string[];
 }
 
-export function Configuracion({ username }: ConfiguracionProps) {
+export function Configuracion({ username, permisos }: ConfiguracionProps) {
+    const canManageUsers = permisos.includes('gestionar_usuarios');
+    const canEditCompany = permisos.includes('editar_empresa');
+    const canBackup = permisos.includes('gestionar_respaldos');
+    const canRestore = permisos.includes('restaurar_respaldos');
+    const canAudit = permisos.includes('ver_bitacora');
+    const initialTab = canManageUsers ? 'usuarios' : canEditCompany ? 'empresa' : canBackup || canRestore ? 'respaldos' : 'auditoria';
     const [mensaje, setMensaje] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
 
@@ -43,6 +51,8 @@ export function Configuracion({ username }: ConfiguracionProps) {
     const [nuevoUsername, setNuevoUsername] = useState('');
     const [nuevoPassword, setNuevoPassword] = useState('');
     const [nuevoRol, setNuevoRol] = useState<string | null>('vendedor');
+    const [resetTarget, setResetTarget] = useState<Usuario | null>(null);
+    const [resetPassword, setResetPassword] = useState('');
 
     // Estados para Auditoría
     const [logs, setLogs] = useState<LogAuditoria[]>([]);
@@ -60,8 +70,8 @@ export function Configuracion({ username }: ConfiguracionProps) {
     });
 
     useEffect(() => {
-        cargarUsuarios();
-        cargarDatosEmpresa();
+        if (canManageUsers) cargarUsuarios();
+        if (canEditCompany) cargarDatosEmpresa();
     }, []);
 
     const cargarDatosEmpresa = async () => {
@@ -137,6 +147,30 @@ export function Configuracion({ username }: ConfiguracionProps) {
         }
     };
 
+    const handleActualizarEstado = async (usuario: Usuario) => {
+        const accion = usuario.activo ? 'desactivar' : 'activar';
+        if (!confirm(`¿Quieres ${accion} la cuenta de ${usuario.username}?`)) return;
+        try {
+            await invoke('actualizar_estado_usuario', { id: usuario.id, activo: !usuario.activo });
+            await cargarUsuarios();
+            notifications.show({ title: 'Cuenta actualizada', message: `Cuenta ${usuario.activo ? 'desactivada' : 'activada'}.`, color: 'green' });
+        } catch (err) {
+            notifications.show({ title: 'Error', message: String(err), color: 'red' });
+        }
+    };
+
+    const handleRestablecerPassword = async () => {
+        if (!resetTarget) return;
+        try {
+            await invoke('restablecer_password_usuario', { id: resetTarget.id, passwordNueva: resetPassword });
+            notifications.show({ title: 'Contraseña restablecida', message: 'La persona deberá cambiarla al iniciar sesión.', color: 'green' });
+            setResetTarget(null);
+            setResetPassword('');
+        } catch (err) {
+            notifications.show({ title: 'Error', message: String(err), color: 'red' });
+        }
+    };
+
     const handleCrearRespaldo = async () => {
         setMensaje(null);
         setError(null);
@@ -199,10 +233,15 @@ export function Configuracion({ username }: ConfiguracionProps) {
         <Table.Tr key={usuario.id}>
             <Table.Td>{usuario.username}</Table.Td>
             <Table.Td><Badge color={usuario.rol === 'admin' ? 'blue' : 'gray'}>{usuario.rol}</Badge></Table.Td>
+            <Table.Td><Badge color={usuario.activo ? 'green' : 'gray'}>{usuario.activo ? 'Activa' : 'Inactiva'}</Badge></Table.Td>
             <Table.Td>
-                <Button color="red" size="xs" variant="subtle" onClick={() => handleEliminarUsuario(usuario.id, usuario.username)}>
-                    <IconTrash size="1rem" />
-                </Button>
+                <Group gap="xs">
+                    <Button size="xs" variant="light" disabled={usuario.username === username} onClick={() => { setResetTarget(usuario); setResetPassword(''); }}>Restablecer contraseña</Button>
+                    <Button size="xs" variant="light" color={usuario.activo ? 'orange' : 'green'} disabled={usuario.username === username} onClick={() => handleActualizarEstado(usuario)}>{usuario.activo ? 'Desactivar' : 'Activar'}</Button>
+                    <Button color="red" size="xs" variant="subtle" disabled={usuario.username === username} onClick={() => handleEliminarUsuario(usuario.id, usuario.username)} aria-label={`Eliminar ${usuario.username}`}>
+                        <IconTrash size="1rem" />
+                    </Button>
+                </Group>
             </Table.Td>
         </Table.Tr>
     ));
@@ -223,17 +262,18 @@ export function Configuracion({ username }: ConfiguracionProps) {
             {mensaje && <Alert color="green" title="Éxito" mb="md" withCloseButton onClose={() => setMensaje(null)}>{mensaje}</Alert>}
             {error && <Alert color="red" icon={<IconAlertCircle />} title="Error" mb="md" withCloseButton onClose={() => setError(null)}>{error}</Alert>}
 
-            <Tabs defaultValue="usuarios">
+            <Tabs defaultValue={initialTab}>
                 <Tabs.List mb="md">
-                    <Tabs.Tab value="usuarios" leftSection={<IconUsers size="0.8rem" />}>Usuarios</Tabs.Tab>
-                    <Tabs.Tab value="empresa" leftSection={<IconBuildingStore size="0.8rem" />}>Datos Empresa</Tabs.Tab>
-                    <Tabs.Tab value="respaldos" leftSection={<IconDatabase size="0.8rem" />}>Respaldos</Tabs.Tab>
-                    <Tabs.Tab value="auditoria" leftSection={<IconHistory size="0.8rem" />}>Auditoría y Seguridad</Tabs.Tab>
+                    {canManageUsers && <Tabs.Tab value="usuarios" leftSection={<IconUsers size="0.8rem" />}>Usuarios</Tabs.Tab>}
+                    {canEditCompany && <Tabs.Tab value="empresa" leftSection={<IconBuildingStore size="0.8rem" />}>Datos Empresa</Tabs.Tab>}
+                    {(canBackup || canRestore) && <Tabs.Tab value="respaldos" leftSection={<IconDatabase size="0.8rem" />}>Respaldos</Tabs.Tab>}
+                    {canAudit && <Tabs.Tab value="auditoria" leftSection={<IconHistory size="0.8rem" />}>Auditoría y Seguridad</Tabs.Tab>}
                 </Tabs.List>
 
-                <Tabs.Panel value="usuarios">
+                {canManageUsers && <Tabs.Panel value="usuarios">
                     <Title order={4} mb="sm">Gestión de Usuarios</Title>
                     <Text size="sm" c="dimmed" mb="md">Administra quién tiene acceso al sistema.</Text>
+                    <Text size="sm" c="dimmed" mb="md">Las cuentas nuevas y las contraseñas restablecidas requieren un cambio al primer acceso.</Text>
 
                     <Button leftSection={<IconUserPlus size="1rem" />} onClick={open} mb="md">Nuevo Usuario</Button>
 
@@ -242,14 +282,15 @@ export function Configuracion({ username }: ConfiguracionProps) {
                             <Table.Tr>
                                 <Table.Th>Usuario</Table.Th>
                                 <Table.Th>Rol</Table.Th>
+                                <Table.Th>Estado</Table.Th>
                                 <Table.Th>Acciones</Table.Th>
                             </Table.Tr>
                         </Table.Thead>
                         <Table.Tbody>{rowsUsuarios}</Table.Tbody>
                     </Table>
-                </Tabs.Panel>
+                </Tabs.Panel>}
 
-                <Tabs.Panel value="empresa">
+                {canEditCompany && <Tabs.Panel value="empresa">
                     <Title order={4} mb="sm">Personalización del Negocio</Title>
                     <Text size="sm" c="dimmed" mb="md">Estos datos aparecerán en los tickets impresos.</Text>
                     <Stack maw={500}>
@@ -296,24 +337,24 @@ export function Configuracion({ username }: ConfiguracionProps) {
 
                         <Button mt="md" onClick={handleGuardarEmpresa}>Guardar Información</Button>
                     </Stack>
-                </Tabs.Panel>
+                </Tabs.Panel>}
 
-                <Tabs.Panel value="respaldos">
+                {(canBackup || canRestore) && <Tabs.Panel value="respaldos">
                     <Title order={4} mb="sm">Respaldo y Restauración</Title>
                     <Text mb="md">
                         Guarda una copia de seguridad de todos tus datos o restaura una versión anterior.
                     </Text>
                     <Group>
-                        <Button onClick={handleCrearRespaldo} variant="outline">
+                        {canBackup && <Button onClick={handleCrearRespaldo} variant="outline">
                             Crear Respaldo
-                        </Button>
-                        <Button onClick={handleRestaurarRespaldo} variant="outline" color="red">
+                        </Button>}
+                        {canRestore && <Button onClick={handleRestaurarRespaldo} variant="outline" color="red">
                             Restaurar Respaldo
-                        </Button>
+                        </Button>}
                     </Group>
-                </Tabs.Panel>
+                </Tabs.Panel>}
 
-                <Tabs.Panel value="auditoria">
+                {canAudit && <Tabs.Panel value="auditoria">
                     <Title order={4} mb="sm">Bitácora de Eventos (Audit Log)</Title>
                     <Text size="sm" c="dimmed" mb="md">Registro de acciones críticas en el sistema.</Text>
 
@@ -348,7 +389,7 @@ export function Configuracion({ username }: ConfiguracionProps) {
                             {rowsLogs.length > 0 ? rowsLogs : <Table.Tr><Table.Td colSpan={4} align="center">No hay registros para este periodo.</Table.Td></Table.Tr>}
                         </Table.Tbody>
                     </Table>
-                </Tabs.Panel>
+                </Tabs.Panel>}
             </Tabs>
 
             <Modal opened={opened} onClose={close} title="Crear Nuevo Usuario" centered>
@@ -362,6 +403,13 @@ export function Configuracion({ username }: ConfiguracionProps) {
                         onChange={setNuevoRol}
                     />
                     <Button onClick={handleCrearUsuario}>Crear Usuario</Button>
+                </Stack>
+            </Modal>
+
+            <Modal opened={resetTarget !== null} onClose={() => { setResetTarget(null); setResetPassword(''); }} title={`Restablecer contraseña: ${resetTarget?.username ?? ''}`} centered>
+                <Stack>
+                    <PasswordInput label="Contraseña temporal" description="Al menos 12 caracteres; no debe contener el nombre de usuario." value={resetPassword} onChange={(event) => setResetPassword(event.currentTarget.value)} />
+                    <Button onClick={handleRestablecerPassword}>Restablecer</Button>
                 </Stack>
             </Modal>
         </Paper>
