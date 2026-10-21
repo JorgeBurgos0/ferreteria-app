@@ -13,7 +13,7 @@ npm ci
 npm run tauri dev
 ```
 
-`npm run build` compila la interfaz; `npm test` ejecuta las pruebas de exportación. La base de datos SQLite se crea en el directorio de datos de la aplicación. Al abrirla por primera vez, el responsable crea la cuenta administradora y elige una contraseña de al menos 12 caracteres.
+`npm run build` compila la interfaz; `npm test` prueba la lectura y escritura de hojas de cálculo. La base de datos SQLite se crea en el directorio de datos de la aplicación. Al abrirla por primera vez, el responsable crea la cuenta administradora y elige una contraseña de al menos 12 caracteres.
 
 ## Documentación
 

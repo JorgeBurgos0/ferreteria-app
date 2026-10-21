@@ -115,13 +115,15 @@ pub fn required_permission(command: &str) -> Result<Option<&'static str>, ()> {
         "agregar_producto" | "actualizar_producto" | "eliminar_producto" | "agregar_stock"
         | "importar_productos_masivos" | "verificar_skus" | "guardar_componentes_kit"
         | "obtener_componentes_kit" | "obtener_proveedores" | "agregar_proveedor"
+        | "leer_catalogo" | "leer_proveedores_archivo"
         | "previsualizar_proveedores" | "confirmar_proveedores"
         | "actualizar_proveedor" | "eliminar_proveedor" => Some("gestion_inventario"),
         "realizar_venta" => Some("realizar_venta"),
-        "crear_cotizacion" | "obtener_cotizaciones" | "eliminar_cotizacion" => Some("gestionar_cotizaciones"),
+        "crear_cotizacion" | "obtener_cotizaciones" | "obtener_detalle_cotizacion" | "eliminar_cotizacion" => Some("gestionar_cotizaciones"),
         "buscar_venta_para_devolucion" | "procesar_devolucion" => Some("gestionar_devoluciones"),
         "agregar_cliente" | "actualizar_cliente" | "eliminar_cliente"
         | "previsualizar_clientes" | "confirmar_clientes"
+        | "leer_clientes_archivo"
         | "obtener_historial_compras" => Some("gestionar_clientes"),
         "obtener_resumen_corte" | "guardar_corte" => Some("cerrar_caja"),
         "eliminar_corte" => Some("reabrir_caja"),
@@ -130,7 +132,7 @@ pub fn required_permission(command: &str) -> Result<Option<&'static str>, ()> {
             Some("gestionar_usuarios")
         }
         "obtener_roles" | "obtener_permisos_rol" => Some("gestionar_usuarios"),
-        "obtener_productos_con_sobre_stock" | "generar_reporte_ventas"
+        "obtener_productos_con_sobre_stock" | "generar_reporte_ventas" | "guardar_reporte_archivo"
         | "generar_reporte_devoluciones" => Some("ver_reportes"),
         "obtener_resumen_dashboard" | "obtener_productos_mas_vendidos"
         | "obtener_ventas_por_categoria" | "obtener_historial_ventas"

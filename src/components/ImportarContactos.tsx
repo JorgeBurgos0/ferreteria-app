@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { Button, Group, Modal, ScrollArea, Stack, Table, Text } from '@mantine/core';
 import { open } from '@tauri-apps/plugin-dialog';
-import { readFile } from '@tauri-apps/plugin-fs';
 import { invoke } from '../lib/invoke';
 import { readSpreadsheet } from '../lib/spreadsheet';
 
@@ -27,7 +26,7 @@ export function ImportarContactos({ kind, onImported }: { kind: Kind; onImported
     try {
       const path = await open({ title: `Importar ${kind}`, filters: [{ name: 'CSV o Excel', extensions: ['csv', 'xlsx'] }] });
       if (!path || typeof path !== 'string') return;
-      const file = await readFile(path);
+      const file = new Uint8Array(await invoke<number[]>(kind === 'clientes' ? 'leer_clientes_archivo' : 'leer_proveedores_archivo', { ruta: path }));
       if (file.length > 5 * 1024 * 1024) throw new Error('El archivo supera 5 MB');
       const data = await readSpreadsheet(file, path);
       if (!data.length || data.length > 5000) throw new Error('El archivo debe contener entre 1 y 5000 filas');

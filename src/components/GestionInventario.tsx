@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Table, Button, Group, Modal, TextInput, NumberInput, Title, ActionIcon, Text, Badge, Switch, Select, Stack, Alert, Pagination, Checkbox, ScrollArea } from '@mantine/core';
 import { open } from '@tauri-apps/plugin-dialog';
-import { readFile } from '@tauri-apps/plugin-fs';
 import { readSpreadsheet } from '../lib/spreadsheet';
 import { notifications } from '@mantine/notifications';
 import { IconEdit, IconTrash, IconPlus, IconAlertCircle, IconSearch, IconFileSpreadsheet } from '@tabler/icons-react';
@@ -230,7 +229,7 @@ export function GestionInventario({ username }: { username: string }) {
       });
 
       if (selected && typeof selected === 'string') {
-        const fileData = await readFile(selected);
+        const fileData = new Uint8Array(await invoke<number[]>('leer_catalogo', { ruta: selected }));
         const jsonData = await readSpreadsheet(fileData, selected);
 
         // Map data from Excel

@@ -1,6 +1,6 @@
 // src/components/PuntoDeVenta.tsx
 import { useState, useEffect } from 'react';
-import { Button, Paper, Title, Table, Group, Text, NumberInput, ActionIcon, Stack, Select, Modal, SegmentedControl, Switch, Alert } from '@mantine/core';
+import { Button, Paper, Title, Table, Group, Text, TextInput, NumberInput, ActionIcon, Stack, Select, Modal, SegmentedControl, Switch, Alert } from '@mantine/core';
 import { IconTrash, IconShoppingCart, IconPrinter, IconFileText, IconAlertCircle } from '@tabler/icons-react';
 import { invoke } from '../lib/invoke';
 import { TicketImprimible, DatosVentaTicket } from './TicketImprimible';
@@ -44,6 +44,7 @@ export function PuntoDeVenta({ userId, canSell, canQuote }: PuntoDeVentaProps) {
     const [carrito, setCarrito] = useState<ItemCarrito[]>([]);
     const [total, setTotal] = useState(0);
     const [skuInput, setSkuInput] = useState('');
+    const [codigoManual, setCodigoManual] = useState('');
     const [datosUltimaVenta, setDatosUltimaVenta] = useState<DatosVentaTicket | null>(null);
 
     // Estados para clientes
@@ -114,9 +115,11 @@ export function PuntoDeVenta({ userId, canSell, canQuote }: PuntoDeVentaProps) {
     }, [productos, carrito]);
 
     const procesarCodigoBarras = (codigo: string) => {
-        const producto = productos.find(p => p.sku === codigo);
+        const producto = productos.find(p => p.sku.toLowerCase() === codigo.trim().toLowerCase());
         if (producto) {
             agregarAlCarrito(producto);
+        } else {
+            setError(`No se encontró el SKU "${codigo.trim()}".`);
         }
     };
 
@@ -132,6 +135,7 @@ export function PuntoDeVenta({ userId, canSell, canQuote }: PuntoDeVentaProps) {
                 setCarrito(prev => prev.map(item => item.id === producto.id ? { ...item, cantidad: item.cantidad + 1 } : item));
             } else {
                 setError(`No hay más stock para "${producto.nombre}".`);
+                return;
             }
         } else {
             setCarrito(prev => [...prev, { ...producto, cantidad: 1 }]);
@@ -341,6 +345,20 @@ export function PuntoDeVenta({ userId, canSell, canQuote }: PuntoDeVentaProps) {
             <Paper p="md" shadow="xs" withBorder>
                 {error && <Alert icon={<IconAlertCircle size="1rem" />} title="Atención" color="red" withCloseButton onClose={() => setError(null)} mb="md">{error}</Alert>}
                 <Group align="flex-end" mb="md">
+                    <TextInput
+                        label="Escanear o escribir SKU"
+                        placeholder="Código y Enter"
+                        value={codigoManual}
+                        onChange={(event) => setCodigoManual(event.currentTarget.value)}
+                        onKeyDown={(event) => {
+                            if (event.key === 'Enter') {
+                                event.preventDefault();
+                                if (codigoManual.trim()) procesarCodigoBarras(codigoManual);
+                                setCodigoManual('');
+                            }
+                        }}
+                        style={{ width: 220 }}
+                    />
                     <Select
                         label="Buscar Producto"
                         placeholder="Escribe nombre o SKU"

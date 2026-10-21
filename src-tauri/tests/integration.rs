@@ -1,4 +1,4 @@
-use ferreteria_app::{auth::{required_permission, user_still_allowed, SessionState}, commands::{backups::{self, BackupSettings}, configuracion::restore_database, corte_caja::totals, importaciones::{self, ImportRow}}, db};
+use ferreteria_app::{auth::{required_permission, user_still_allowed, SessionState}, commands::{archivos, backups::{self, BackupSettings}, configuracion::restore_database, corte_caja::totals, cotizaciones::quote_details, importaciones::{self, ImportRow}}, db};
 use rusqlite::{params, Connection};
 use std::{fs, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
 
@@ -14,12 +14,13 @@ fn permissions_reject_other_roles_and_invalidate_old_sessions() {
     let state = SessionState::default();
     let seller = state.start(2, "vendedor".into(), vec!["realizar_venta".into()], false).unwrap();
     assert!(state.authorize(&seller, required_permission("realizar_venta").unwrap()));
-    for command in ["procesar_devolucion", "guardar_corte", "crear_cotizacion", "agregar_cliente", "previsualizar_clientes", "crear_backup", "guardar_configuracion_local", "guardar_datos_empresa", "obtener_logs"] {
+    for command in ["procesar_devolucion", "guardar_corte", "crear_cotizacion", "obtener_detalle_cotizacion", "agregar_cliente", "previsualizar_clientes", "leer_clientes_archivo", "crear_backup", "guardar_configuracion_local", "guardar_datos_empresa", "guardar_reporte_archivo", "obtener_logs"] {
         assert!(!state.authorize(&seller, required_permission(command).unwrap()), "{command}");
     }
     assert!(!state.authorize(&seller, required_permission("restaurar_backup").unwrap()));
     assert!(!state.authorize(&seller, required_permission("agregar_producto").unwrap()));
     assert!(!state.authorize(&seller, required_permission("confirmar_proveedores").unwrap()));
+    assert!(!state.authorize(&seller, required_permission("leer_catalogo").unwrap()));
     assert!(!state.authorize("", None));
     assert!(required_permission("comando_inexistente").is_err());
 
@@ -213,4 +214,39 @@ fn contact_import_previews_deduplicates_and_reports_errors() {
     let supplier = vec![ImportRow { fila: 2, nombre: "Tornillos SA".into(), rfc: String::new(), telefono: String::new(), email: String::new(), nombre_contacto: "Luis".into() }];
     assert_eq!(importaciones::process(&mut conn, "proveedores", &supplier, Some("admin")).unwrap().agregados, 1);
     assert_eq!(importaciones::process(&mut conn, "proveedores", &supplier, Some("admin")).unwrap().duplicados, 1);
+}
+
+#[test]
+fn quote_detail_keeps_the_price_saved_at_creation() {
+    let conn = Connection::open_in_memory().unwrap();
+    db::inicializar(&conn).unwrap();
+    conn.execute("INSERT INTO productos (sku, nombre, precio_venta, stock_actual) VALUES ('M-1', 'Martillo', 80, 4)", []).unwrap();
+    conn.execute("INSERT INTO cotizaciones (fecha_hora, total_cotizacion, vigencia) VALUES ('2026-10-21 10:00:00', 50, '2026-11-05')", []).unwrap();
+    conn.execute("INSERT INTO detalle_cotizaciones (id_cotizacion, id_producto, cantidad, precio_unitario) VALUES (1, 1, 1, 50)", []).unwrap();
+    let detail = quote_details(&conn, 1).unwrap().unwrap();
+    let serialized = serde_json::to_value(detail).unwrap();
+    assert_eq!(serialized["items"][0]["precio_unitario"], 50.0);
+    assert_eq!(serialized["items"][0]["nombre"], "Martillo");
+    assert_eq!(serialized["vigencia"], "2026-11-05");
+    assert!(quote_details(&conn, 999).unwrap().is_none());
+}
+
+#[test]
+fn file_commands_restrict_types_sizes_and_overwrites() {
+    let dir = test_dir();
+    let csv = dir.join("clientes.csv");
+    let secret = dir.join("secreto.txt");
+    fs::write(&csv, "Nombre\nAna\n").unwrap();
+    fs::write(&secret, "privado").unwrap();
+    assert_eq!(archivos::read_spreadsheet(&csv).unwrap(), b"Nombre\nAna\n");
+    assert!(archivos::read_spreadsheet(&secret).is_err());
+    let output = dir.join("reporte.xlsx");
+    archivos::write_spreadsheet(&output, b"PK\x03\x04ensayo").unwrap();
+    assert!(archivos::write_spreadsheet(&output, b"PK\x03\x04nuevo").is_err());
+    assert_eq!(fs::read(&output).unwrap(), b"PK\x03\x04ensayo");
+    #[cfg(unix)] {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(fs::metadata(&output).unwrap().permissions().mode() & 0o777, 0o600);
+    }
+    fs::remove_dir_all(dir).unwrap();
 }

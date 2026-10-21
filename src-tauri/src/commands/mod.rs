@@ -3,6 +3,7 @@ pub mod analytics_widgets;
 pub mod auditoria;
 pub mod backups;
 pub mod importaciones;
+pub mod archivos;
 pub mod clientes;
 pub mod configuracion;
 pub mod corte_caja;

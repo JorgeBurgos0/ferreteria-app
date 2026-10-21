@@ -35,10 +35,10 @@ El vendedor, con los permisos iniciales, puede consultar el panel, vender en efe
 
 ## Archivos, impresoras y periféricos
 
-- El ticket de venta, el corte y ciertos reportes usan el diálogo de impresión del sistema (`window.print()`). No se ha validado una impresora física ni hay control directo de impresoras térmicas.
-- La pantalla de cotizaciones permite consultar y eliminar cotizaciones guardadas. La impresión y conversión directa a venta aún no están implementadas.
-- En punto de venta se reconoce un lector de códigos de barras que actúe como teclado: escribe un SKU completo y envía Enter rápidamente. No hay conexión específica a USB/serial, lectura de imágenes, generación de etiquetas ni prueba física del lector.
-- Los reportes se pueden exportar a XLSX mediante el selector de archivos. La exportación no es PDF.
+- Tickets de venta, cortes, cotizaciones y reportes se imprimen mediante el diálogo del sistema. Revisa la vista previa y la configuración de papel de tu impresora; la aplicación no controla directamente impresoras térmicas.
+- Las cotizaciones guardadas muestran artículos, precios, cliente y vigencia; pueden imprimirse y eliminarse. No reservan inventario. Para cobrar sus artículos se realiza una venta en el punto de venta con los precios vigentes.
+- En el punto de venta, un lector que funciona como teclado puede enviar el SKU seguido de Enter. También se puede escribir en el campo **Escanear o escribir SKU**. No hay conexión directa a lectores USB/serial.
+- Los reportes se exportan como XLSX. El archivo se guarda mediante un comando autorizado por `ver_reportes`; la aplicación solicita un nombre nuevo y no sobrescribe archivos existentes.
 
 ## Datos, bitácora y respaldos
 
@@ -46,6 +46,4 @@ En Fedora, la base se crea en el directorio de datos de la aplicación, normalme
 
 Con `gestionar_respaldos` se puede activar el **respaldo automático local**, elegir una carpeta existente y conservar entre 1 y 30 copias. Se crea una copia al activar la opción y después, como máximo, una por día mientras la aplicación esté abierta. La aplicación comprueba la integridad antes de conservar la copia y rota solo los archivos automáticos que creó con el prefijo `ferreteria-auto-`; los respaldos manuales no entran en esa rotación. La pantalla muestra la fecha de la última copia y el último error. Si la carpeta deja de estar disponible, el respaldo falla y se reintentará durante la siguiente comprobación; conviene revisar periódicamente la carpeta. Los respaldos y archivos XLSX no están cifrados: protege esa carpeta como datos del negocio y de clientes. Tras restaurar una base creada en otro equipo, revisa la ruta de la carpeta de respaldos.
 
-La bitácora guarda en SQLite acciones de productos (alta, edición, baja, stock e importación), importación de clientes/proveedores, respaldos, restauraciones, ventas, devoluciones, cortes y reaperturas, inicios de sesión correctos/fallidos, cambios de contraseñas, usuarios/permisos y datos de empresa. Cada registro tiene actor y fecha; la pantalla consulta hasta 1000 eventos del rango con `ver_bitacora`. La conservación es indefinida por defecto. Se puede elegir 90, 180, 365 o 730 días desde la configuración de respaldos, pero solo si el respaldo automático está activo. La depuración ocurre después de crear una copia verificada que conserva los registros antiguos. No existe un botón para borrar la bitácora.
-
-El repositorio Git contiene código, documentación, licencia y CSV de **ensayo**. Excluye `artifacts/`, `node_modules/`, compilaciones y bases de datos locales. Nunca publiques `ferreteria.db`, respaldos, exportaciones con datos reales ni la clave GPG privada.
+La bitácora guarda en SQLite acciones de productos (alta, edición, baja, stock e importación), importación de clientes/proveedores, cotizaciones, respaldos, restauraciones, ventas, devoluciones, cortes y reaperturas, inicios de sesión correctos/fallidos, cambios de contraseñas, usuarios/permisos y datos de empresa. Cada registro tiene actor y fecha; la pantalla consulta hasta 1000 eventos del rango con `ver_bitacora`. La conservación es indefinida por defecto. Se puede elegir 90, 180, 365 o 730 días desde la configuración de respaldos, pero solo si el respaldo automático está activo. La depuración ocurre después de crear una copia verificada que conserva los registros antiguos. No existe un botón para borrar la bitácora.

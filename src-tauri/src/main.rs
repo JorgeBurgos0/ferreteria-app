@@ -17,6 +17,7 @@ fn main() {
             commands::productos::verificar_skus,
             commands::cotizaciones::crear_cotizacion,
             commands::cotizaciones::obtener_cotizaciones,
+            commands::cotizaciones::obtener_detalle_cotizacion,
             commands::cotizaciones::eliminar_cotizacion,
             commands::corte_caja::obtener_resumen_corte,
             commands::corte_caja::guardar_corte,
@@ -61,6 +62,10 @@ fn main() {
             commands::importaciones::confirmar_clientes,
             commands::importaciones::previsualizar_proveedores,
             commands::importaciones::confirmar_proveedores,
+            commands::archivos::leer_catalogo,
+            commands::archivos::leer_clientes_archivo,
+            commands::archivos::leer_proveedores_archivo,
+            commands::archivos::guardar_reporte_archivo,
             commands::configuracion::obtener_datos_empresa,
             commands::configuracion::guardar_datos_empresa,
             commands::devoluciones::generar_reporte_devoluciones,
@@ -104,7 +109,6 @@ fn main() {
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_fs::init())
         .invoke_handler(move |invoke: tauri::ipc::Invoke| {
             let command = invoke.message.command();
             if matches!(command, "login" | "hay_usuarios" | "crear_usuario_inicial") {

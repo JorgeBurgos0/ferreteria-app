@@ -4,7 +4,7 @@ La interfaz usa React y TypeScript dentro de Tauri 2. Los comandos Rust gestiona
 
 ## Acceso
 
-La primera apertura permite crear una cuenta administradora. Las contraseñas se almacenan como hashes Argon2. Cada comando propio de Tauri comprueba la sesión, el estado activo de la cuenta y el permiso actual en SQLite mediante `src-tauri/src/auth.rs`; las rutas de la interfaz también ocultan pantallas sin permiso. Los permisos de los plugins de archivos y diálogo se definen en `src-tauri/capabilities/default.json`.
+La primera apertura permite crear una cuenta administradora. Las contraseñas se almacenan como hashes Argon2. Cada comando propio de Tauri comprueba la sesión, el estado activo de la cuenta y el permiso actual en SQLite mediante `src-tauri/src/auth.rs`; las rutas de la interfaz también ocultan pantallas sin permiso. El plugin de diálogo selecciona rutas; la lectura de CSV/XLSX y la escritura de reportes se realizan en comandos Rust con permisos y límites de tamaño. Las capacidades de Tauri se definen en `src-tauri/capabilities/default.json`.
 
 ## Persistencia
 

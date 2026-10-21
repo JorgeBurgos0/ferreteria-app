@@ -127,7 +127,8 @@ button {
 
   /* Mostrar solo los elementos imprimibles y sacarlos del flujo normal para que ocupen todo el papel */
   #ticket-imprimible,
-  #reporte-imprimible {
+  #reporte-imprimible,
+  #cotizacion-imprimible {
     visibility: visible;
     position: fixed;
     /* Fixed asegura que se posicione relativo a la ventana/papel */
@@ -140,7 +141,8 @@ button {
 
   /* Asegurar que el contenido interno también sea visible (por si acaso hay reglas conflictivas) */
   #ticket-imprimible *,
-  #reporte-imprimible * {
+  #reporte-imprimible *,
+  #cotizacion-imprimible * {
     visibility: visible;
   }
 
@@ -154,6 +156,12 @@ button {
     width: 100%;
     padding: 20px;
     font-size: 12pt;
+  }
+
+  #cotizacion-imprimible {
+    width: 190mm;
+    padding: 12mm;
+    font-size: 11pt;
   }
 
   /* Resetear html/body */

@@ -5,7 +5,6 @@ import { Table, Title, Paper, Alert, Group, Button, Accordion, Text, Tabs, Grid,
 import { IconCash, IconChartBar, IconChartPie, IconPrinter, IconArrowBackUp, IconDeviceFloppy } from '@tabler/icons-react';
 import { writeSpreadsheet } from '../lib/spreadsheet';
 import { save } from '@tauri-apps/plugin-dialog';
-import { writeFile } from '@tauri-apps/plugin-fs';
 import { notifications } from '@mantine/notifications';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
@@ -252,7 +251,7 @@ export function Reportes() {
       });
 
       if (ruta) {
-        await writeFile(ruta, wbout);
+        await invoke('guardar_reporte_archivo', { ruta, contenido: Array.from(wbout) });
         notifications.show({
           title: 'Éxito',
           message: `Archivo guardado en: ${ruta}`,
