@@ -1,0 +1,26 @@
+[package]
+name = "ferreteria-app"
+version = "0.1.0"
+description = "Punto de venta e inventario para ferretería"
+authors = ["Jorge Burgos"]
+edition = "2021"
+license = "GPL-3.0-only"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.37.0", features = ["bundled", "backup"] }
+chrono = { version = "0.4.41", features = ["serde"] }
+argon2 = "0.5.3"
+rand_core = { version = "0.6.4", features = ["std", "getrandom"] }
+tauri-plugin-dialog = "2.3.2"
+tauri-plugin-fs = "2"
+regex = "1.12.2"
+base64 = "0.22"
+

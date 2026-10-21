@@ -1,0 +1,13 @@
+pub mod analytics;
+pub mod analytics_widgets;
+pub mod auditoria;
+pub mod clientes;
+pub mod configuracion;
+pub mod corte_caja;
+pub mod cotizaciones;
+pub mod devoluciones;
+pub mod productos;
+pub mod proveedores;
+pub mod reportes;
+pub mod seguridad;
+pub mod ventas;

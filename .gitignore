@@ -1,0 +1,31 @@
+# Archivos de sistema operativo
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Dependencias (muy importante)
+/node_modules
+/src-tauri/target
+
+# Archivos de compilación y artefactos
+/dist
+/artifacts
+/.local/
+/dist-js
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+
+# Archivos de IDE y editores
+.vscode/
+.idea/
+
+# Variables de entorno
+.env
+.env*.local

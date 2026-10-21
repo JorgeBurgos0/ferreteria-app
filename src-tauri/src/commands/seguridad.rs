@@ -1,0 +1,321 @@
+// src-tauri/src/commands/seguridad.rs
+use crate::{auth::SessionState, commands::auditoria, db::DbConnection};
+use argon2::{
+    password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
+    Argon2,
+};
+use rusqlite::{params, OptionalExtension};
+use tauri::State;
+
+type DbConn<'a> = State<'a, DbConnection>;
+
+// Struct para devolver los datos del usuario logueado al frontend
+#[derive(serde::Serialize, Clone)]
+pub struct UsuarioLogueado {
+    id: i32,
+    username: String,
+    rol: String,
+    permisos: Vec<String>,
+    token: String,
+    requiere_cambio_password: bool,
+}
+
+// Struct para listar usuarios (sin hash)
+#[derive(serde::Serialize)]
+pub struct Usuario {
+    id: i32,
+    username: String,
+    rol: String,
+    permisos: Vec<String>,
+}
+
+#[tauri::command]
+pub fn login(username: String, password: String, db: DbConn, session: State<SessionState>) -> Result<UsuarioLogueado, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+
+    // 1. Buscamos al usuario por su nombre de usuario
+    let (id, password_hash, rol): (i32, String, String) = conn
+        .query_row(
+            "SELECT id, password_hash, rol FROM usuarios WHERE username = ?1",
+            params![username],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Usuario o contraseña incorrectos".to_string())?;
+
+    // 2. Parseamos el hash guardado en la base de datos
+    let parsed_hash =
+        PasswordHash::new(&password_hash).map_err(|_| "Error interno del servidor".to_string())?;
+
+    // 3. Verificamos que la contraseña proporcionada coincida con el hash
+    Argon2::default()
+        .verify_password(password.as_bytes(), &parsed_hash)
+        .map_err(|_| "Usuario o contraseña incorrectos".to_string())?;
+
+    // 4. Obtener permisos del rol
+    let mut stmt_permisos = conn.prepare(
+        "SELECT p.clave 
+         FROM permisos p
+         JOIN rol_permisos rp ON p.id = rp.id_permiso
+         JOIN roles r ON rp.id_rol = r.id
+         WHERE LOWER(r.nombre) = LOWER(?1)"
+    ).map_err(|e| e.to_string())?;
+
+    let permisos_iter = stmt_permisos.query_map(params![rol], |row| {
+        row.get(0)
+    }).map_err(|e| e.to_string())?;
+
+    let mut permisos = Vec::new();
+    for p in permisos_iter {
+        permisos.push(p.map_err(|e| e.to_string())?);
+    }
+
+    // 5. Si todo es correcto, devolvemos los datos del usuario con sus permisos
+    let requiere_cambio_password = username == "admin" && password == "admin";
+    auditoria::registrar_evento_interno(&conn, &username, "INICIO_SESION", None)
+        .map_err(|e| e.to_string())?;
+    let token = session.start(id, username.clone(), permisos.clone(), requiere_cambio_password)?;
+    Ok(UsuarioLogueado { id, username, rol, permisos, token, requiere_cambio_password })
+}
+
+#[tauri::command]
+pub fn hay_usuarios(db: DbConn) -> Result<bool, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM usuarios", [], |row| row.get(0))
+        .map_err(|e| e.to_string())?;
+    Ok(count > 0)
+}
+
+fn validar_password(password: &str, username: &str) -> Result<(), String> {
+    if password.chars().count() < 12 || password.to_lowercase().contains(&username.to_lowercase()) {
+        return Err("La contraseña debe tener al menos 12 caracteres y no incluir el usuario".to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn crear_usuario_inicial(password: String, db: DbConn) -> Result<(), String> {
+    validar_password(&password, "admin")?;
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM usuarios", [], |row| row.get(0))
+        .map_err(|e| e.to_string())?;
+    if count != 0 {
+        return Err("La cuenta inicial ya fue creada".to_string());
+    }
+    let salt = SaltString::generate(&mut OsRng);
+    let argon2 = Argon2::default();
+    let password_hash = argon2
+        .hash_password(password.as_bytes(), &salt)
+        .map_err(|_| "No se pudo hashear la contraseña".to_string())?
+        .to_string();
+
+    // Creamos el usuario "admin" si no existe
+    conn.execute(
+        "INSERT INTO usuarios (username, password_hash, rol) VALUES (?1, ?2, ?3)",
+        params!["admin", password_hash, "admin"],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn cambiar_password(password_nueva: String, db: DbConn, session: State<SessionState>) -> Result<(), String> {
+    let current = session.current_user()?;
+    validar_password(&password_nueva, &current.username)?;
+    let salt = SaltString::generate(&mut OsRng);
+    let hash = Argon2::default()
+        .hash_password(password_nueva.as_bytes(), &salt)
+        .map_err(|_| "No se pudo proteger la contraseña".to_string())?
+        .to_string();
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    conn.execute("UPDATE usuarios SET password_hash = ?1 WHERE id = ?2", params![hash, current.user_id])
+        .map_err(|e| e.to_string())?;
+    session.password_changed()?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn logout(session: State<SessionState>) -> Result<(), String> {
+    session.clear()
+}
+
+#[tauri::command]
+pub fn obtener_usuarios(db: DbConn) -> Result<Vec<Usuario>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare("SELECT id, username, rol FROM usuarios")
+        .map_err(|e| e.to_string())?;
+
+    let usuarios_iter = stmt
+        .query_map([], |row| {
+            Ok(Usuario {
+                id: row.get(0)?,
+                username: row.get(1)?,
+                rol: row.get(2)?,
+                permisos: Vec::new(), // Por defecto vacío en lista simple
+            })
+        })
+        .map_err(|e| e.to_string())?;
+
+    let mut usuarios = Vec::new();
+    for usuario in usuarios_iter {
+        usuarios.push(usuario.map_err(|e| e.to_string())?);
+    }
+    Ok(usuarios)
+}
+
+#[tauri::command]
+pub fn crear_usuario(
+    username: String,
+    password: String,
+    rol: String,
+    db: DbConn,
+    session: State<SessionState>,
+) -> Result<(), String> {
+    validar_password(&password, &username)?;
+    let actor = session.current_user()?.username;
+    let mut conn = db.0.lock().map_err(|e| e.to_string())?;
+    let role_exists: Option<i32> = conn.query_row(
+        "SELECT 1 FROM roles WHERE LOWER(nombre) = LOWER(?1)",
+        params![rol], |row| row.get(0),
+    ).optional().map_err(|e| e.to_string())?;
+    if role_exists.is_none() {
+        return Err("El rol no existe".into());
+    }
+
+    // Hasheamos la contraseña
+    let salt = SaltString::generate(&mut OsRng);
+    let argon2 = Argon2::default();
+    let password_hash = argon2
+        .hash_password(password.as_bytes(), &salt)
+        .map_err(|_| "No se pudo hashear la contraseña".to_string())?
+        .to_string();
+
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT INTO usuarios (username, password_hash, rol) VALUES (?1, ?2, ?3)",
+        params![username, password_hash, rol],
+    )
+    .map_err(|e| e.to_string())?;
+    let details = format!("usuario={username}; rol={rol}");
+    auditoria::registrar_evento_interno(&tx, &actor, "CREAR_USUARIO", Some(&details))
+        .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn eliminar_usuario(id: i32, db: DbConn, session: State<SessionState>) -> Result<(), String> {
+    let actor = session.current_user()?;
+    if id == actor.user_id {
+        return Err("No puedes eliminar tu cuenta activa".into());
+    }
+    let mut conn = db.0.lock().map_err(|e| e.to_string())?;
+    let is_admin: bool = conn.query_row(
+        "SELECT LOWER(rol) = 'admin' FROM usuarios WHERE id = ?1",
+        params![id], |row| row.get(0),
+    ).optional().map_err(|e| e.to_string())?.unwrap_or(false);
+    if is_admin {
+        let admins: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM usuarios WHERE LOWER(rol) = 'admin'", [], |row| row.get(0),
+        ).map_err(|e| e.to_string())?;
+        if admins <= 1 {
+            return Err("No se puede eliminar el último administrador".to_string());
+        }
+    }
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM usuarios WHERE id = ?1", params![id])
+        .map_err(|e| e.to_string())?;
+    let details = format!("usuario_id={id}");
+    auditoria::registrar_evento_interno(&tx, &actor.username, "ELIMINAR_USUARIO", Some(&details))
+        .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+pub struct Rol {
+    id: i32,
+    nombre: String,
+    descripcion: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+pub struct Permiso {
+    id: i32,
+    clave: String,
+    descripcion: Option<String>,
+}
+
+#[tauri::command]
+pub fn obtener_roles(db: DbConn) -> Result<Vec<Rol>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    // Corregimos la query para usar la tabla roles
+    let mut stmt = conn.prepare("SELECT id, nombre, descripcion FROM roles").map_err(|e| e.to_string())?;
+    
+    let roles = stmt.query_map([], |row| {
+        Ok(Rol {
+            id: row.get(0)?,
+            nombre: row.get(1)?,
+            descripcion: row.get(2)?,
+        })
+    }).map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+
+    Ok(roles)
+}
+
+#[tauri::command]
+pub fn obtener_permisos_rol(db: DbConn, id_rol: i32) -> Result<Vec<String>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    
+    let mut stmt = conn.prepare(
+        "SELECT p.clave 
+         FROM permisos p
+         JOIN rol_permisos rp ON p.id = rp.id_permiso
+         WHERE rp.id_rol = ?1"
+    ).map_err(|e| e.to_string())?;
+
+    let permisos_iter = stmt.query_map(params![id_rol], |row| {
+        row.get::<_, String>(0)
+    }).map_err(|e| e.to_string())?;
+
+    let mut permisos = Vec::new();
+    for p in permisos_iter {
+        permisos.push(p.map_err(|e| e.to_string())?);
+    }
+
+    Ok(permisos)
+}
+
+#[tauri::command]
+pub fn guardar_permisos_rol(db: DbConn, id_rol: i32, permisos: Vec<String>, session: State<SessionState>) -> Result<(), String> {
+    if id_rol == 1 && (!permisos.iter().any(|p| p == "gestionar_usuarios")
+        || !permisos.iter().any(|p| p == "configuracion")) {
+        return Err("El rol Admin debe conservar usuarios y configuración".into());
+    }
+    let actor = session.current_user()?.username;
+    let mut conn = db.0.lock().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+
+    // Limpiar permisos actuales
+    tx.execute("DELETE FROM rol_permisos WHERE id_rol = ?1", params![id_rol]).map_err(|e| e.to_string())?;
+
+    // Insertar nuevos
+    for clave in permisos {
+        // Buscar ID del permiso por clave
+        let id_permiso: Option<i32> = tx.query_row("SELECT id FROM permisos WHERE clave = ?1", params![clave], |row| row.get(0)).optional().map_err(|e| e.to_string())?;
+        
+        if let Some(id) = id_permiso {
+            tx.execute("INSERT INTO rol_permisos (id_rol, id_permiso) VALUES (?1, ?2)", params![id_rol, id]).map_err(|e| e.to_string())?;
+        }
+    }
+
+    let details = format!("rol_id={id_rol}");
+    auditoria::registrar_evento_interno(&tx, &actor, "CAMBIAR_PERMISOS", Some(&details))
+        .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}

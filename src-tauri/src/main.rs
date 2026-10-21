@@ -1,0 +1,116 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+use rusqlite::Connection;
+use std::sync::Mutex;
+use tauri::Manager;
+use ferreteria_app::{auth, commands, db};
+
+fn main() {
+    let commands: Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync> = Box::new(tauri::generate_handler![
+            commands::productos::obtener_productos,
+            commands::productos::obtener_productos_paginados,
+            commands::productos::agregar_producto,
+            commands::productos::actualizar_producto,
+            commands::productos::eliminar_producto,
+            commands::productos::agregar_stock,
+            commands::productos::importar_productos_masivos,
+            commands::productos::verificar_skus,
+            commands::cotizaciones::crear_cotizacion,
+            commands::cotizaciones::obtener_cotizaciones,
+            commands::cotizaciones::eliminar_cotizacion,
+            commands::corte_caja::obtener_resumen_corte,
+            commands::corte_caja::guardar_corte,
+            commands::corte_caja::eliminar_corte,
+            commands::productos::obtener_producto_por_sku,
+            commands::productos::guardar_componentes_kit,
+            commands::productos::obtener_componentes_kit,
+            commands::ventas::realizar_venta,
+            commands::reportes::obtener_productos_con_bajo_stock,
+            commands::reportes::obtener_productos_con_sobre_stock,
+            commands::reportes::generar_reporte_ventas,
+            commands::reportes::obtener_resumen_dashboard,
+            commands::seguridad::login,
+            commands::seguridad::hay_usuarios,
+            commands::seguridad::crear_usuario_inicial,
+            commands::seguridad::cambiar_password,
+            commands::seguridad::logout,
+            commands::seguridad::obtener_usuarios,
+            commands::seguridad::crear_usuario,
+            commands::seguridad::eliminar_usuario,
+            commands::seguridad::obtener_roles,
+            commands::seguridad::obtener_permisos_rol,
+            commands::seguridad::guardar_permisos_rol,
+            commands::devoluciones::buscar_venta_para_devolucion,
+            commands::devoluciones::procesar_devolucion,
+            commands::clientes::obtener_clientes,
+            commands::clientes::agregar_cliente,
+            commands::clientes::actualizar_cliente,
+            commands::clientes::eliminar_cliente,
+            commands::clientes::obtener_historial_compras,
+            commands::proveedores::obtener_proveedores,
+            commands::proveedores::agregar_proveedor,
+            commands::proveedores::actualizar_proveedor,
+            commands::proveedores::eliminar_proveedor,
+            commands::configuracion::restaurar_backup,
+            commands::configuracion::crear_backup,
+            commands::configuracion::obtener_datos_empresa,
+            commands::configuracion::guardar_datos_empresa,
+            commands::devoluciones::generar_reporte_devoluciones,
+            commands::analytics::obtener_productos_mas_vendidos,
+            commands::analytics::obtener_ventas_por_categoria,
+            commands::analytics::obtener_historial_ventas,
+            commands::analytics::obtener_top_entidades,
+            commands::analytics::obtener_nuevos_clientes,
+            commands::analytics_widgets::guardar_widget_analytics,
+            commands::analytics_widgets::obtener_widgets_analytics,
+            commands::analytics_widgets::eliminar_widget_analytics,
+            commands::auditoria::obtener_logs,
+        ]);
+    tauri::Builder::default()
+        .manage(auth::SessionState::default())
+        .setup(|app| {
+            let handle = app.handle();
+            let app_dir = handle
+                .path()
+                .app_data_dir()
+                .expect("Failed to get app data dir");
+            if !app_dir.exists() {
+                std::fs::create_dir_all(&app_dir).expect("Failed to create app data dir");
+            }
+            let db_path = app_dir.join("ferreteria.db");
+            let conn = Connection::open(&db_path).expect("Failed to open database");
+
+            db::inicializar(&conn).expect("Failed to initialize database");
+            app.manage(db::DbConnection(Mutex::new(conn)));
+            Ok(())
+        })
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
+        .invoke_handler(move |invoke: tauri::ipc::Invoke| {
+            let command = invoke.message.command();
+            if matches!(command, "login" | "hay_usuarios" | "crear_usuario_inicial") {
+                return commands(invoke);
+            }
+            let authorized = auth::required_permission(command).is_ok_and(|permission| {
+                let token = invoke
+                    .message
+                    .headers()
+                    .get("x-session-token")
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or("");
+                invoke
+                    .message
+                    .webview_ref()
+                    .state::<auth::SessionState>()
+                    .authorize(token, permission)
+            });
+            if authorized {
+                commands(invoke)
+            } else {
+                invoke.resolver.reject("Sesión inválida o permiso insuficiente");
+                true
+            }
+        })
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}
