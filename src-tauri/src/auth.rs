@@ -115,11 +115,12 @@ pub fn required_permission(command: &str) -> Result<Option<&'static str>, ()> {
         "agregar_producto" | "actualizar_producto" | "eliminar_producto" | "agregar_stock"
         | "importar_productos_masivos" | "verificar_skus" | "guardar_componentes_kit"
         | "obtener_componentes_kit" | "obtener_proveedores" | "agregar_proveedor"
-        | "leer_catalogo" | "leer_proveedores_archivo"
+        | "leer_catalogo" | "leer_proveedores_archivo" | "guardar_codigo_barras_svg"
         | "previsualizar_proveedores" | "confirmar_proveedores"
         | "actualizar_proveedor" | "eliminar_proveedor" => Some("gestion_inventario"),
         "realizar_venta" => Some("realizar_venta"),
-        "iniciar_lector_movil" | "conectar_android_usb" | "tomar_lectura_movil" | "detener_lector_movil" => Some("realizar_venta"),
+        "iniciar_lector_movil" | "iniciar_lector_wifi" | "conectar_android_usb" | "tomar_lectura_movil" | "detener_lector_movil"
+        | "listar_dispositivos_lector" | "revocar_dispositivo_lector" => Some("realizar_venta"),
         "crear_cotizacion" | "obtener_cotizaciones" | "obtener_detalle_cotizacion" | "eliminar_cotizacion" => Some("gestionar_cotizaciones"),
         "buscar_venta_para_devolucion" | "procesar_devolucion" => Some("gestionar_devoluciones"),
         "agregar_cliente" | "actualizar_cliente" | "eliminar_cliente"
@@ -133,6 +134,7 @@ pub fn required_permission(command: &str) -> Result<Option<&'static str>, ()> {
             Some("gestionar_usuarios")
         }
         "obtener_roles" | "obtener_permisos_rol" => Some("gestionar_usuarios"),
+        "activar_cifrado" => Some("gestionar_usuarios"),
         "obtener_productos_con_sobre_stock" | "generar_reporte_ventas" | "guardar_reporte_archivo"
         | "generar_reporte_devoluciones" => Some("ver_reportes"),
         "obtener_resumen_dashboard" | "obtener_productos_mas_vendidos"

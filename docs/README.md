@@ -1,9 +1,10 @@
 # Documentación
 
-Este directorio es el punto de entrada para la documentación del proyecto.
+| Guía | Contenido |
+| --- | --- |
+| [Instalación](instalacion.md) | Fedora, verificación del RPM y compilación desde el código |
+| [Primeros pasos](primeros-pasos.md) | Configuración inicial, primer producto, venta y respaldo |
+| [Operación](operacion.md) | Referencia de funciones, permisos, archivos y dispositivos |
+| [Arquitectura](arquitectura.md) | Componentes, almacenamiento y límites de integración |
 
-- [Instalación y desarrollo](instalacion.md): requisitos de Fedora y comandos de trabajo.
-- [Operación](operacion.md): ventas, usuarios, periféricos y respaldos.
-- [Arquitectura y datos](arquitectura.md): componentes, almacenamiento y límites de integración.
-
-Las pruebas automatizadas están en `tests/` y `src-tauri/tests/`. Los datos de ensayo y su procedencia están en [tests/fixtures](../tests/fixtures/README.md).
+Los datos de ejemplo y su procedencia se describen en [tests/fixtures](../tests/fixtures/README.md).

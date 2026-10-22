@@ -6,7 +6,7 @@ if [[ $# -ne 1 || ! $1 =~ ^([[:xdigit:]]{40}|[[:xdigit:]]{64})$ ]]; then
   exit 2
 fi
 
-for program in gpg rpmsign rpmkeys sha256sum; do
+for program in cmp gpg rpmsign rpmkeys sha256sum; do
   if ! command -v "$program" >/dev/null 2>&1; then
     printf 'Falta el comando %s. En Fedora instala rpm-sign con: sudo dnf install rpm-sign\n' "$program" >&2
     exit 1
@@ -20,7 +20,7 @@ if ! gpg --list-secret-keys --with-colons "$fingerprint" | grep -q '^sec:'; then
 fi
 
 repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-rpm_name=ferreteria-app-0.1.0-1.x86_64.rpm
+rpm_name=ferreteria-app-0.1.0-5.x86_64.rpm
 source_rpm="$repo_dir/artifacts/$rpm_name"
 output_dir="$repo_dir/artifacts/signed"
 signed_rpm="$output_dir/$rpm_name"
@@ -31,7 +31,7 @@ if [[ ! -f $source_rpm ]]; then
   printf 'No existe el RPM original: %s\n' "$source_rpm" >&2
   exit 1
 fi
-if [[ -e $signed_rpm || -e $public_key || -e $checksum ]]; then
+if [[ -e $signed_rpm || -e $checksum ]]; then
   printf 'Ya hay archivos de firma en %s; revísalos antes de volver a firmar.\n' "$output_dir" >&2
   exit 1
 fi
@@ -49,6 +49,10 @@ if [[ ! -s $work_dir/RPM-GPG-KEY-ferreteria-app.asc ]]; then
   printf 'No se pudo exportar la clave pública.\n' >&2
   exit 1
 fi
+if [[ -e $public_key ]] && ! cmp -s -- "$work_dir/RPM-GPG-KEY-ferreteria-app.asc" "$public_key"; then
+  printf 'La clave pública existente no coincide con la clave solicitada.\n' >&2
+  exit 1
+fi
 
 # Verificar sin importar la clave al sistema ni necesitar privilegios de administrador.
 rpmkeys --dbpath "$verify_db" --import "$work_dir/RPM-GPG-KEY-ferreteria-app.asc"
@@ -59,7 +63,9 @@ if ! grep -Eiq 'signature.*: OK' "$work_dir/verificacion.txt"; then
 fi
 
 mv -- "$work_dir/$rpm_name" "$signed_rpm"
-mv -- "$work_dir/RPM-GPG-KEY-ferreteria-app.asc" "$public_key"
+if [[ ! -e $public_key ]]; then
+  mv -- "$work_dir/RPM-GPG-KEY-ferreteria-app.asc" "$public_key"
+fi
 (cd -- "$output_dir" && sha256sum "$rpm_name" > "$rpm_name.sha256")
 printf '\nRPM firmado: %s\nClave pública: %s\nSHA-256: %s\nHuella: %s\n' \
   "$signed_rpm" "$public_key" "$checksum" "$fingerprint"

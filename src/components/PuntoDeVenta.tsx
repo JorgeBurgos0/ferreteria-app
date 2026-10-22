@@ -9,6 +9,7 @@ import { notifications } from '@mantine/notifications';
 interface Producto {
     id: number;
     sku: string;
+    codigo_barras?: string | null;
     nombre: string;
     descripcion: string;
     precio_venta: number;
@@ -39,7 +40,8 @@ interface PuntoDeVentaProps {
     canQuote: boolean;
 }
 
-interface LectorMovil { port: number; code: string }
+interface LectorMovil { port: number; code: string; url: string }
+interface DispositivoLector { id: number; nombre: string; fecha_registro: string }
 
 export function PuntoDeVenta({ userId, canSell, canQuote }: PuntoDeVentaProps) {
     const [productos, setProductos] = useState<Producto[]>([]);
@@ -49,6 +51,7 @@ export function PuntoDeVenta({ userId, canSell, canQuote }: PuntoDeVentaProps) {
     const [codigoManual, setCodigoManual] = useState('');
     const [lectorMovil, setLectorMovil] = useState<LectorMovil | null>(null);
     const [estadoLectorMovil, setEstadoLectorMovil] = useState('');
+    const [dispositivosLector, setDispositivosLector] = useState<DispositivoLector[]>([]);
     const procesarDesdeMovil = useRef<(sku: string) => void>(() => undefined);
     const [datosUltimaVenta, setDatosUltimaVenta] = useState<DatosVentaTicket | null>(null);
 
@@ -120,11 +123,12 @@ export function PuntoDeVenta({ userId, canSell, canQuote }: PuntoDeVentaProps) {
     }, [productos, carrito]);
 
     const procesarCodigoBarras = (codigo: string) => {
-        const producto = productos.find(p => p.sku.toLowerCase() === codigo.trim().toLowerCase());
+        const buscado = codigo.trim().toLowerCase();
+        const producto = productos.find(p => p.sku.toLowerCase() === buscado || p.codigo_barras?.toLowerCase() === buscado);
         if (producto) {
             agregarAlCarrito(producto);
         } else {
-            setError(`No se encontró el SKU "${codigo.trim()}".`);
+            setError(`No se encontró el SKU o código "${codigo.trim()}".`);
         }
     };
     procesarDesdeMovil.current = procesarCodigoBarras;
@@ -152,13 +156,19 @@ export function PuntoDeVenta({ userId, canSell, canQuote }: PuntoDeVentaProps) {
         void invoke('detener_lector_movil').catch(() => undefined);
     }, []);
 
+    const cargarDispositivosLector = async () => {
+        try { setDispositivosLector(await invoke<DispositivoLector[]>('listar_dispositivos_lector')); }
+        catch { setDispositivosLector([]); }
+    };
+
     const iniciarLectorMovil = async () => {
         try {
             const info = await invoke<LectorMovil>('iniciar_lector_movil');
             setLectorMovil(info);
+            await cargarDispositivosLector();
             try {
                 await invoke('conectar_android_usb');
-                setEstadoLectorMovil('Conexión USB preparada. Abre la dirección en Chrome del móvil.');
+                setEstadoLectorMovil('Conexión USB preparada. Abre la dirección en un navegador compatible del móvil.');
             } catch (reason) {
                 setEstadoLectorMovil(`Lector activo; conexión USB pendiente: ${reason}`);
             }
@@ -395,7 +405,7 @@ export function PuntoDeVenta({ userId, canSell, canQuote }: PuntoDeVentaProps) {
                 {error && <Alert icon={<IconAlertCircle size="1rem" />} title="Atención" color="red" withCloseButton onClose={() => setError(null)} mb="md">{error}</Alert>}
                 <Group align="flex-end" mb="md">
                     <TextInput
-                        label="Escanear o escribir SKU"
+                        label="Escanear o escribir SKU/código"
                         placeholder="Código y Enter"
                         value={codigoManual}
                         onChange={(event) => setCodigoManual(event.currentTarget.value)}
@@ -463,9 +473,9 @@ export function PuntoDeVenta({ userId, canSell, canQuote }: PuntoDeVentaProps) {
 
             {canSell && <Paper p="md" shadow="xs" withBorder>
                 <Title order={4}>Lector con Android</Title>
-                <Text size="sm">Conecta el móvil por USB y autoriza la depuración USB. La cámara y el SKU funcionan sin nube.</Text>
-                {!lectorMovil ? <Button mt="sm" onClick={iniciarLectorMovil}>Activar lector móvil</Button> : <>
-                    <Text mt="sm">En Chrome del móvil abre <strong>http://localhost:{lectorMovil.port}</strong> y escribe el código <strong>{lectorMovil.code}</strong>.</Text>
+                <Text size="sm">La cámara envía solo el código leído al equipo; no utiliza nube. También puedes escribir el SKU o buscar el producto manualmente.</Text>
+                {!lectorMovil ? <Button mt="sm" onClick={iniciarLectorMovil}>Activar por USB</Button> : <>
+                    <Text mt="sm">En el navegador del móvil abre <strong>{lectorMovil.url}</strong>. En el primer registro escribe el código <strong>{lectorMovil.code}</strong>; después el móvil se reconecta automáticamente mientras conserve su registro.</Text>
                     <Group mt="sm">
                         <Button variant="light" onClick={async () => {
                             try { await invoke('conectar_android_usb'); setEstadoLectorMovil('Conexión USB preparada.'); }
@@ -473,6 +483,9 @@ export function PuntoDeVenta({ userId, canSell, canQuote }: PuntoDeVentaProps) {
                         }}>Reintentar conexión USB</Button>
                         <Button variant="subtle" color="red" onClick={detenerLectorMovil}>Detener lector</Button>
                     </Group>
+                    <Text fw={500} size="sm" mt="md">Móviles registrados para tu usuario</Text>
+                    <Button size="xs" variant="subtle" onClick={cargarDispositivosLector}>Actualizar lista</Button>
+                    {dispositivosLector.map(device => <Group key={device.id} justify="space-between"><Text size="sm">{device.nombre} · {device.fecha_registro}</Text><Button size="xs" color="red" variant="subtle" onClick={async () => { try { await invoke('revocar_dispositivo_lector', { id: device.id }); await cargarDispositivosLector(); } catch (reason) { setEstadoLectorMovil(String(reason)); } }}>Revocar</Button></Group>)}
                 </>}
                 {estadoLectorMovil && <Text size="sm" mt="sm">{estadoLectorMovil}</Text>}
             </Paper>}

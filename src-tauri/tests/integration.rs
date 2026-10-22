@@ -14,16 +14,17 @@ fn permissions_reject_other_roles_and_invalidate_old_sessions() {
     let state = SessionState::default();
     let seller = state.start(2, "vendedor".into(), vec!["realizar_venta".into()], false).unwrap();
     assert!(state.authorize(&seller, required_permission("realizar_venta").unwrap()));
-    for command in ["procesar_devolucion", "guardar_corte", "crear_cotizacion", "obtener_detalle_cotizacion", "agregar_cliente", "previsualizar_clientes", "leer_clientes_archivo", "crear_backup", "guardar_configuracion_local", "guardar_datos_empresa", "guardar_reporte_archivo", "obtener_logs"] {
+    for command in ["procesar_devolucion", "guardar_corte", "crear_cotizacion", "obtener_detalle_cotizacion", "agregar_cliente", "previsualizar_clientes", "leer_clientes_archivo", "crear_backup", "guardar_configuracion_local", "guardar_datos_empresa", "guardar_reporte_archivo", "obtener_logs", "activar_cifrado"] {
         assert!(!state.authorize(&seller, required_permission(command).unwrap()), "{command}");
     }
-    for command in ["iniciar_lector_movil", "conectar_android_usb", "tomar_lectura_movil", "detener_lector_movil"] {
+    for command in ["iniciar_lector_movil", "conectar_android_usb", "tomar_lectura_movil", "detener_lector_movil", "listar_dispositivos_lector", "revocar_dispositivo_lector"] {
         assert!(state.authorize(&seller, required_permission(command).unwrap()), "{command}");
     }
     assert!(!state.authorize(&seller, required_permission("restaurar_backup").unwrap()));
     assert!(!state.authorize(&seller, required_permission("agregar_producto").unwrap()));
     assert!(!state.authorize(&seller, required_permission("confirmar_proveedores").unwrap()));
     assert!(!state.authorize(&seller, required_permission("leer_catalogo").unwrap()));
+    assert!(!state.authorize(&seller, required_permission("guardar_codigo_barras_svg").unwrap()));
     assert!(!state.authorize("", None));
     assert!(required_permission("comando_inexistente").is_err());
 
@@ -134,7 +135,7 @@ fn restore_replaces_data_and_rejects_unrelated_database() {
     active.execute("INSERT INTO productos (sku, nombre, precio_venta, stock_actual) VALUES ('SKU-3', 'Conservar', 1, 1)", []).unwrap();
     assert!(restore_database(&future_schema, &mut active, &safety_after_failure).is_err());
     assert_eq!(active.query_row("SELECT COUNT(*) FROM productos WHERE sku = 'SKU-3'", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
-    assert_eq!(active.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(), 6);
+    assert_eq!(active.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(), 7);
     drop(active);
     fs::remove_dir_all(dir).unwrap();
 }
@@ -247,9 +248,16 @@ fn file_commands_restrict_types_sizes_and_overwrites() {
     archivos::write_spreadsheet(&output, b"PK\x03\x04ensayo").unwrap();
     assert!(archivos::write_spreadsheet(&output, b"PK\x03\x04nuevo").is_err());
     assert_eq!(fs::read(&output).unwrap(), b"PK\x03\x04ensayo");
+    let svg = dir.join("codigo.svg");
+    let widths = vec![2,1,1,2,1,4, 1,1,1,3,2,3, 1,3,1,1,2,3, 2,3,3,1,1,1,2];
+    archivos::guardar_codigo_barras_svg(svg.to_string_lossy().into_owned(), "A".into(), widths.clone()).unwrap();
+    assert!(fs::read_to_string(&svg).unwrap().contains(">A</text>"));
+    assert!(archivos::guardar_codigo_barras_svg(svg.to_string_lossy().into_owned(), "A".into(), widths).is_err());
+    assert!(archivos::guardar_codigo_barras_svg(dir.join("malo.svg").to_string_lossy().into_owned(), "A".into(), vec![1]).is_err());
     #[cfg(unix)] {
         use std::os::unix::fs::PermissionsExt;
         assert_eq!(fs::metadata(&output).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(fs::metadata(&svg).unwrap().permissions().mode() & 0o777, 0o600);
     }
     fs::remove_dir_all(dir).unwrap();
 }

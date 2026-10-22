@@ -1,7 +1,30 @@
 use rusqlite::{params, Connection, OptionalExtension};
+use std::path::Path;
 use std::sync::Mutex;
 
 pub struct DbConnection(pub Mutex<Connection>);
+
+/// Keep the local database and SQLite sidecar files private to the OS user.
+pub fn preparar_directorio_local(app_dir: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(app_dir)?;
+    #[cfg(unix)] {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(app_dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
+pub fn preparar_archivo_local(app_dir: &Path, db_path: &Path) -> std::io::Result<()> {
+    preparar_directorio_local(app_dir)?;
+    #[cfg(unix)] {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).mode(0o600);
+        let file = options.open(db_path)?;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
+}
 
 fn ensure_column(
     conn: &Connection,
@@ -25,7 +48,7 @@ fn ensure_column(
 pub fn inicializar(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    if version > 6 {
+    if version > 7 {
         return Err(rusqlite::Error::InvalidQuery);
     }
     conn.execute_batch("SAVEPOINT app_schema")?;
@@ -173,6 +196,14 @@ pub fn inicializar(conn: &Connection) -> Result<(), rusqlite::Error> {
             usuario TEXT NOT NULL,
             fecha_hora_cierre TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS lector_dispositivos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id_usuario INTEGER NOT NULL,
+            nombre TEXT NOT NULL,
+            token_hash TEXT NOT NULL UNIQUE,
+            fecha_registro TEXT NOT NULL,
+            FOREIGN KEY (id_usuario) REFERENCES usuarios(id) ON DELETE CASCADE
+        );
         ",
     )?;
 
@@ -185,6 +216,8 @@ pub fn inicializar(conn: &Connection) -> Result<(), rusqlite::Error> {
     ensure_column(conn, "productos", "categoria", "TEXT DEFAULT 'General'")?;
     ensure_column(conn, "productos", "es_kit", "INTEGER DEFAULT 0")?;
     ensure_column(conn, "productos", "stock_maximo", "INTEGER")?;
+    ensure_column(conn, "productos", "codigo_barras", "TEXT")?;
+    conn.execute_batch("CREATE UNIQUE INDEX IF NOT EXISTS idx_productos_codigo_barras ON productos(codigo_barras) WHERE codigo_barras IS NOT NULL")?;
     
     // Migraciones Phase 8: Advanced Analytics
     ensure_column(conn, "clientes", "fecha_registro", "TEXT")?;
@@ -316,7 +349,7 @@ pub fn inicializar(conn: &Connection) -> Result<(), rusqlite::Error> {
              UPDATE datos_empresa SET telefono = '' WHERE telefono = '555-0000';"
         )?;
     }
-    conn.execute_batch("PRAGMA user_version = 6;")?;
+    conn.execute_batch("PRAGMA user_version = 7;")?;
     Ok(())
     })();
     match result {
@@ -332,6 +365,35 @@ pub fn inicializar(conn: &Connection) -> Result<(), rusqlite::Error> {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    #[test]
+    fn local_database_creation_and_reopen_restrict_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!(
+            "ferreteria-db-permissions-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let app_dir = root.join("app");
+        let db_path = app_dir.join("ferreteria.db");
+        preparar_archivo_local(&app_dir, &db_path).unwrap();
+        assert_eq!(std::fs::metadata(&app_dir).unwrap().permissions().mode() & 0o777, 0o700);
+        assert_eq!(std::fs::metadata(&db_path).unwrap().permissions().mode() & 0o777, 0o600);
+        let conn = Connection::open(&db_path).unwrap();
+        inicializar(&conn).unwrap();
+        drop(conn);
+        std::fs::set_permissions(&app_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::set_permissions(&db_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        preparar_archivo_local(&app_dir, &db_path).unwrap();
+        assert_eq!(std::fs::metadata(&app_dir).unwrap().permissions().mode() & 0o777, 0o700);
+        assert_eq!(std::fs::metadata(&db_path).unwrap().permissions().mode() & 0o777, 0o600);
+        let conn = Connection::open(&db_path).unwrap();
+        let version: i32 = conn.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
+        assert_eq!(version, 7);
+        drop(conn);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn fresh_schema_is_reentrant_and_enforces_foreign_keys() {
         let conn = Connection::open_in_memory().unwrap();
@@ -340,7 +402,7 @@ mod tests {
         let enabled: i32 = conn.query_row("PRAGMA foreign_keys", [], |row| row.get(0)).unwrap();
         let version: i32 = conn.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
         assert_eq!(enabled, 1);
-        assert_eq!(version, 6);
+        assert_eq!(version, 7);
         let (direccion, telefono): (String, String) = conn.query_row(
             "SELECT direccion, telefono FROM datos_empresa WHERE id = 1", [],
             |row| Ok((row.get(0)?, row.get(1)?))
@@ -350,6 +412,19 @@ mod tests {
             "INSERT INTO detalle_ventas (id_venta, id_producto, cantidad, precio_unitario_en_venta) VALUES (999, 999, 1, 1)",
             [],
         ).is_err());
+    }
+
+    #[test]
+    fn migration_adds_barcode_without_changing_existing_sku() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE productos (id INTEGER PRIMARY KEY, sku TEXT UNIQUE NOT NULL, nombre TEXT NOT NULL, precio_venta REAL NOT NULL, stock_actual INTEGER NOT NULL); INSERT INTO productos (sku, nombre, precio_venta, stock_actual) VALUES ('OLD-1', 'Existente', 10, 2); PRAGMA user_version = 6;").unwrap();
+        inicializar(&conn).unwrap();
+        let (sku, barcode): (String, Option<String>) = conn.query_row("SELECT sku, codigo_barras FROM productos WHERE id = 1", [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
+        assert_eq!(sku, "OLD-1");
+        assert_eq!(barcode, None);
+        conn.execute("UPDATE productos SET codigo_barras = '7501234567890' WHERE id = 1", []).unwrap();
+        conn.execute("INSERT INTO productos (sku, nombre, precio_venta, stock_actual) VALUES ('NEW-2', 'Nuevo', 2, 1)", []).unwrap();
+        assert!(conn.execute("UPDATE productos SET codigo_barras = '7501234567890' WHERE sku = 'NEW-2'", []).is_err());
     }
 
     #[test]

@@ -28,15 +28,17 @@
     <form id="pair-form">
       <label for="pair-code">Código mostrado en el punto de venta</label>
       <input id="pair-code" type="text" inputmode="numeric" pattern="[0-9]{8}" maxlength="8" autocomplete="off" required>
+      <label for="device-name">Nombre de este móvil</label>
+      <input id="device-name" type="text" maxlength="48" value="Mi Android" required>
       <button type="submit">Conectar</button>
     </form>
     <section id="scanner" hidden>
       <video id="camera" autoplay muted playsinline></video>
       <button id="camera-button" type="button">Activar cámara</button>
       <form id="manual-form">
-        <label for="sku">SKU manual</label>
+        <label for="sku">SKU o código manual</label>
         <input id="sku" type="text" maxlength="128" autocomplete="off">
-        <button type="submit">Enviar SKU</button>
+        <button type="submit">Enviar código</button>
       </form>
       <p class="hint">Apunta al código de barras. Si la cámara no lo reconoce, escribe el SKU y envíalo.</p>
     </section>

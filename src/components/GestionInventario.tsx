@@ -1,14 +1,16 @@
 import { useState, useEffect } from 'react';
 import { Table, Button, Group, Modal, TextInput, NumberInput, Title, ActionIcon, Text, Badge, Switch, Select, Stack, Alert, Pagination, Checkbox, ScrollArea } from '@mantine/core';
-import { open } from '@tauri-apps/plugin-dialog';
+import { open, save } from '@tauri-apps/plugin-dialog';
 import { readSpreadsheet } from '../lib/spreadsheet';
 import { notifications } from '@mantine/notifications';
 import { IconEdit, IconTrash, IconPlus, IconAlertCircle, IconSearch, IconFileSpreadsheet } from '@tabler/icons-react';
 import { invoke } from '../lib/invoke';
+import { code128Bars } from '../lib/code128';
 
 interface Producto {
   id: number;
   sku: string;
+  codigo_barras?: string | null;
   nombre: string;
   descripcion: string;
   precio_venta: number;
@@ -46,6 +48,14 @@ interface ProductoPrevisualizacion {
   // El comando importar SUMA stock.
 }
 
+function valorMonetario(value: number | string): number | '' {
+  if (typeof value === 'number') return value;
+  const normalizado = value.replace(/[$,\s]/g, '');
+  if (!normalizado) return '';
+  const numero = Number(normalizado);
+  return Number.isFinite(numero) ? numero : '';
+}
+
 export function GestionInventario({ username }: { username: string }) {
   const [productos, setProductos] = useState<Producto[]>([]);
   const [modalAbierto, setModalAbierto] = useState(false);
@@ -66,6 +76,8 @@ export function GestionInventario({ username }: { username: string }) {
 
   // Form States
   const [sku, setSku] = useState('');
+  const [codigoBarras, setCodigoBarras] = useState('');
+  const [codigoGuardado, setCodigoGuardado] = useState('');
   const [nombre, setNombre] = useState('');
   const [descripcion, setDescripcion] = useState('');
   const [precio, setPrecio] = useState<number | ''>('');
@@ -112,6 +124,8 @@ export function GestionInventario({ username }: { username: string }) {
     setModoEdicion(true);
     setProductoId(producto.id);
     setSku(producto.sku);
+    setCodigoBarras(producto.codigo_barras || '');
+    setCodigoGuardado(producto.codigo_barras || producto.sku);
     setNombre(producto.nombre);
     setDescripcion(producto.descripcion || '');
     setPrecio(producto.precio_venta);
@@ -145,6 +159,8 @@ export function GestionInventario({ username }: { username: string }) {
 
   const limpiarFormulario = () => {
     setSku('');
+    setCodigoBarras('');
+    setCodigoGuardado('');
     setNombre('');
     setDescripcion('');
     setPrecio('');
@@ -181,8 +197,13 @@ export function GestionInventario({ username }: { username: string }) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (precio === '' || Number(precio) < 0) {
+      setError('Ingresa un precio de venta válido.');
+      return;
+    }
     const datosProducto = {
       sku,
+      codigoBarras: codigoBarras.trim() || null,
       nombre,
       descripcion,
       precioVenta: Number(precio),
@@ -220,6 +241,18 @@ export function GestionInventario({ username }: { username: string }) {
     }
   };
 
+  const guardarEtiqueta = async () => {
+    const value = codigoBarras.trim() || sku.trim();
+    try {
+      const anchos = code128Bars(value).map(bar => bar.width);
+      const nombreArchivo = (sku.trim() || 'codigo').replace(/[^A-Za-z0-9_-]/g, '_');
+      const ruta = await save({ title: 'Guardar código de barras', defaultPath: `${nombreArchivo}.svg`, filters: [{ name: 'Imagen SVG', extensions: ['svg'] }] });
+      if (!ruta) return;
+      await invoke('guardar_codigo_barras_svg', { ruta, codigo: value, anchos });
+      notifications.show({ title: 'Código guardado', message: 'Se guardó la imagen SVG local.', color: 'green' });
+    } catch (reason) { setError(String(reason)); }
+  };
+
 
   const handleImportarExcel = async () => {
     try {
@@ -235,6 +268,7 @@ export function GestionInventario({ username }: { username: string }) {
         // Map data from Excel
         const productosRaw = jsonData.map((row: any) => ({
           sku: String(row.SKU || row.sku || ''),
+          codigo_barras: String(row.CodigoBarras || row.codigo_barras || '').trim() || null,
           nombre: String(row.Nombre || row.nombre || ''),
           descripcion: row.Descripcion || row.descripcion || null,
           precio_venta: Number(row.Precio || row.PrecioVenta || row.precio_venta || 0),
@@ -327,6 +361,7 @@ export function GestionInventario({ username }: { username: string }) {
   const rows = productos.map((producto) => (
     <Table.Tr key={producto.id}>
       <Table.Td>{producto.sku}</Table.Td>
+      <Table.Td>{producto.codigo_barras || '—'}</Table.Td>
       <Table.Td>
         {producto.nombre}
         {producto.es_kit && <Badge color="violet" ml="xs">KIT</Badge>}
@@ -354,7 +389,7 @@ export function GestionInventario({ username }: { username: string }) {
         <Title order={2}>Inventario</Title>
         <Group>
           <TextInput
-            placeholder="Buscar por nombre o SKU"
+            placeholder="Buscar por nombre, SKU o código"
             leftSection={<IconSearch size={14} />}
             value={search}
             onChange={(e) => { setSearch(e.currentTarget.value); setPage(1); }}
@@ -372,6 +407,7 @@ export function GestionInventario({ username }: { username: string }) {
         <Table.Thead>
           <Table.Tr>
             <Table.Th>SKU</Table.Th>
+            <Table.Th>Código de barras</Table.Th>
             <Table.Th>Nombre</Table.Th>
             <Table.Th>Categoría</Table.Th>
             <Table.Th>Precio</Table.Th>
@@ -396,6 +432,19 @@ export function GestionInventario({ username }: { username: string }) {
               <TextInput label="Nombre" value={nombre} onChange={(e) => setNombre(e.currentTarget.value)} required />
             </Group>
 
+            <Group align="flex-end">
+              <TextInput label="Código de barras" description="Opcional: código del fabricante o código propio" value={codigoBarras} onChange={(e) => setCodigoBarras(e.currentTarget.value)} style={{ flex: 1 }} />
+              <Button type="button" variant="light" onClick={() => setCodigoBarras(`FRT-${crypto.randomUUID().slice(0, 12).toUpperCase()}`)}>Generar propio</Button>
+            </Group>
+            {(codigoBarras || sku) && (() => {
+              const value = codigoBarras.trim() || sku.trim();
+              try {
+                const bars = code128Bars(value);
+                let x = 10;
+                return <div><Text size="sm" fw={500}>Código 128 del identificador {codigoBarras ? 'registrado' : 'SKU'}</Text><svg role="img" aria-label={`Código de barras ${value}`} viewBox={`0 0 ${bars.reduce((sum, bar) => sum + bar.width, 20)} 90`} style={{ width: '100%', maxWidth: 420, background: 'white' }}>{bars.map((bar, index) => { const start = x; x += bar.width; return bar.dark ? <rect key={index} x={start} y="5" width={bar.width} height="65" fill="black" /> : null; })}<text x="10" y="84" fontSize="12">{value}</text></svg><Button type="button" size="xs" variant="light" disabled={!modoEdicion || value !== codigoGuardado} onClick={guardarEtiqueta}>Guardar SVG</Button>{(!modoEdicion || value !== codigoGuardado) && <Text size="xs" c="dimmed">Guarda el producto y vuelve a abrirlo para exportar su código.</Text>}</div>;
+              } catch { return <Text size="xs" c="dimmed">La vista de Código 128 admite caracteres ASCII imprimibles.</Text>; }
+            })()}
+
             <TextInput label="Descripción" value={descripcion} onChange={(e) => setDescripcion(e.currentTarget.value)} />
 
             <Group grow>
@@ -407,7 +456,7 @@ export function GestionInventario({ username }: { username: string }) {
               <NumberInput
                 label="Precio de Venta"
                 value={precio}
-                onChange={(value) => { if (typeof value === 'number' || value === '') { setPrecio(value); } }}
+                onChange={(value) => setPrecio(valorMonetario(value))}
                 decimalScale={2}
                 fixedDecimalScale
                 min={0}
@@ -417,7 +466,7 @@ export function GestionInventario({ username }: { username: string }) {
               <NumberInput
                 label="Precio Mayoreo"
                 value={precioMayoreo}
-                onChange={(value) => { if (typeof value === 'number' || value === '') { setPrecioMayoreo(value); } }}
+                onChange={(value) => setPrecioMayoreo(valorMonetario(value))}
                 decimalScale={2}
                 fixedDecimalScale
                 min={0}
@@ -525,6 +574,7 @@ export function GestionInventario({ username }: { username: string }) {
                 <Table.Tr>
                   <Table.Th w={40}></Table.Th>
                   <Table.Th>SKU</Table.Th>
+                  <Table.Th>Código de barras</Table.Th>
                   <Table.Th>Producto</Table.Th>
                   <Table.Th>Precio Actual {"->"} Nuevo</Table.Th>
                   <Table.Th>Stock Actual + Importar</Table.Th>
@@ -539,6 +589,7 @@ export function GestionInventario({ username }: { username: string }) {
                         <Checkbox checked={isSelected} onChange={() => toggleSkuSelection(p.sku)} />
                       </Table.Td>
                       <Table.Td>{p.sku}</Table.Td>
+                      <Table.Td>{p.codigo_barras || '—'}</Table.Td>
                       <Table.Td>
                         <Text size="sm" fw={500}>{p.nombre}</Text>
                         {p.existe && <Text size="xs" c="dimmed">Actual: {p.nombre_actual}</Text>}

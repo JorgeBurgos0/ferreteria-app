@@ -4,32 +4,52 @@ const manualForm = document.querySelector('#manual-form');
 const cameraButton = document.querySelector('#camera-button');
 const video = document.querySelector('#camera');
 const status = document.querySelector('#status');
-let token = '';
+let token = localStorage.getItem('lectorToken') || '';
 let stream = null;
 let detector = null;
 let scanning = false;
 
 function message(value) { status.textContent = value; }
+function connected() {
+  pairForm.hidden = true;
+  scanner.hidden = false;
+  message('Conectado. Activa la cámara o escribe un código.');
+}
+
+if (token) {
+  fetch('/resume', { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: '' })
+    .then(response => {
+      if (!response.ok) throw new Error('Registro vencido o revocado');
+      connected();
+    })
+    .catch(() => {
+      token = '';
+      localStorage.removeItem('lectorToken');
+      message('Introduce el código del punto de venta para registrar este móvil.');
+    });
+}
 
 pairForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   try {
-    const response = await fetch('/pair', { method: 'POST', body: document.querySelector('#pair-code').value.trim() });
+    const response = await fetch('/pair', { method: 'POST', body: JSON.stringify({
+      code: document.querySelector('#pair-code').value.trim(),
+      name: document.querySelector('#device-name').value.trim(),
+    }) });
     if (!response.ok) throw new Error(await response.text());
     token = await response.text();
-    pairForm.hidden = true;
-    scanner.hidden = false;
-    message('Conectado. Activa la cámara o escribe un SKU.');
+    localStorage.setItem('lectorToken', token);
+    connected();
   } catch (error) { message(`No se pudo conectar: ${error.message}`); }
 });
 
 async function sendSku(value) {
-  const sku = value.trim();
-  if (!sku || !token) return false;
+  const codigo = value.trim();
+  if (!codigo || !token) return false;
   try {
-    const response = await fetch('/scan', { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: sku });
+    const response = await fetch('/scan', { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: codigo });
     if (!response.ok) throw new Error(await response.text());
-    message(`Enviado: ${sku}. Cámara detenida; actívala para leer otro código.`);
+    message(`Enviado: ${codigo}. Cámara detenida; actívala para leer otro código.`);
     if (navigator.vibrate) navigator.vibrate(70);
     return true;
   } catch (error) { message(`No se pudo enviar: ${error.message}`); return false; }
@@ -70,11 +90,11 @@ async function scanFrame() {
 cameraButton.addEventListener('click', async () => {
   if (scanning) { stopCamera(); message('Cámara detenida.'); return; }
   if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
-    message('La cámara necesita Chrome en localhost y permiso de cámara.');
+    message('La cámara necesita un navegador compatible en localhost y permiso de cámara.');
     return;
   }
   if (!('BarcodeDetector' in window)) {
-    message('Este navegador no admite lectura de códigos. Usa Chrome actualizado o escribe el SKU.');
+    message('Este navegador no admite lectura de códigos. Usa un navegador compatible o escribe el SKU.');
     return;
   }
   try {

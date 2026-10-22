@@ -67,3 +67,37 @@ pub fn leer_proveedores_archivo(ruta: String) -> Result<Vec<u8>, String> { read_
 pub fn guardar_reporte_archivo(ruta: String, contenido: Vec<u8>) -> Result<(), String> {
     write_spreadsheet(Path::new(&ruta), &contenido)
 }
+
+#[tauri::command]
+pub fn guardar_codigo_barras_svg(ruta: String, codigo: String, anchos: Vec<u8>) -> Result<(), String> {
+    let path = Path::new(&ruta);
+    if extension(path) != "svg" || codigo.is_empty() || codigo.len() > 128
+        || !codigo.bytes().all(|byte| (32..=126).contains(&byte))
+        || anchos.len() != (codigo.len() + 2) * 6 + 7
+        || anchos.iter().any(|width| !(1..=4).contains(width))
+        || anchos.chunks_exact(6).take(codigo.len() + 2).any(|pattern| pattern.iter().map(|value| *value as u16).sum::<u16>() != 11)
+        || anchos[anchos.len() - 7..].iter().map(|value| *value as u16).sum::<u16>() != 13 {
+        return Err("La etiqueta SVG no es válida".into());
+    }
+    let total_width: u32 = anchos.iter().map(|width| *width as u32).sum::<u32>() + 20;
+    let mut contenido = format!("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {total_width} 90\" width=\"{}\" height=\"180\"><rect width=\"100%\" height=\"100%\" fill=\"#fff\"/>", total_width * 2);
+    let mut x = 10u32;
+    for (index, width) in anchos.iter().enumerate() {
+        if index % 2 == 0 { contenido.push_str(&format!("<rect x=\"{x}\" y=\"5\" width=\"{width}\" height=\"65\" fill=\"#000\"/>")); }
+        x += *width as u32;
+    }
+    let label = codigo.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&apos;");
+    contenido.push_str(&format!("<text x=\"10\" y=\"84\" font-family=\"sans-serif\" font-size=\"12\">{label}</text></svg>"));
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)] {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path).map_err(|e| format!("Elige un nombre nuevo para la etiqueta: {e}"))?;
+    if let Err(error) = file.write_all(contenido.as_bytes()).and_then(|_| file.sync_all()) {
+        let _ = fs::remove_file(path);
+        return Err(error.to_string());
+    }
+    Ok(())
+}

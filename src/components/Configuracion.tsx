@@ -1,4 +1,4 @@
-import { Button, Paper, Title, Text, Alert, Table, Modal, TextInput, PasswordInput, Select, Stack, Badge, Group, Tabs, Switch, NumberInput } from '@mantine/core';
+import { Button, Paper, Title, Text, Alert, Table, Modal, TextInput, PasswordInput, Select, Stack, Badge, Group, Tabs, Switch, NumberInput, Checkbox } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { save, open as openDialog } from '@tauri-apps/plugin-dialog';
 import { invoke } from '../lib/invoke';
@@ -63,6 +63,15 @@ export function Configuracion({ username, permisos }: ConfiguracionProps) {
     const [resetTarget, setResetTarget] = useState<Usuario | null>(null);
     const [resetPassword, setResetPassword] = useState('');
     const [backupSettings, setBackupSettings] = useState<BackupSettings>({ enabled: false, folder: '', keep: 7, audit_days: 0, last_backup: null, last_error: null });
+    const [cryptoStatus, setCryptoStatus] = useState<{ encrypted: boolean; locked: boolean } | null>(null);
+    const [masterPassword, setMasterPassword] = useState('');
+    const [masterConfirm, setMasterConfirm] = useState('');
+    const [acceptPasswordLoss, setAcceptPasswordLoss] = useState(false);
+    const [encrypting, setEncrypting] = useState(false);
+    const [restorePath, setRestorePath] = useState<string | null>(null);
+    const [restoring, setRestoring] = useState(false);
+    const [restoreComplete, setRestoreComplete] = useState(false);
+    const [restoreError, setRestoreError] = useState<string | null>(null);
 
     // Estados para Auditoría
     const [logs, setLogs] = useState<LogAuditoria[]>([]);
@@ -83,6 +92,7 @@ export function Configuracion({ username, permisos }: ConfiguracionProps) {
         if (canManageUsers) cargarUsuarios();
         if (canEditCompany) cargarDatosEmpresa();
         if (canBackup) invoke<BackupSettings>('obtener_configuracion_local').then(setBackupSettings).catch((reason) => setError(String(reason)));
+        if (canManageUsers) invoke<{ encrypted: boolean; locked: boolean }>('estado_cifrado').then(setCryptoStatus).catch((reason) => setError(String(reason)));
     }, []);
 
     const cargarDatosEmpresa = async () => {
@@ -101,6 +111,27 @@ export function Configuracion({ username, permisos }: ConfiguracionProps) {
         } catch (e) {
             console.error(e);
             notifications.show({ title: 'Error', message: 'No se pudieron guardar los datos', color: 'red' });
+        }
+    };
+
+    const handleActivarCifrado = async () => {
+        if (masterPassword.length < 12 || masterPassword !== masterConfirm || !acceptPasswordLoss) {
+            setError('Confirma una contraseña maestra de al menos 12 caracteres y acepta el aviso de recuperación.');
+            return;
+        }
+        setEncrypting(true);
+        setError(null);
+        try {
+            await invoke('activar_cifrado', { password: masterPassword });
+            setCryptoStatus({ encrypted: true, locked: false });
+            setMasterPassword('');
+            setMasterConfirm('');
+            setMensaje('Base cifrada. Al abrir la aplicación se pedirá la contraseña maestra. Sustituye o retira los respaldos anteriores sin cifrar.');
+        } catch (reason) {
+            setError(String(reason));
+            invoke<{ encrypted: boolean; locked: boolean }>('estado_cifrado').then(setCryptoStatus).catch(() => undefined);
+        } finally {
+            setEncrypting(false);
         }
     };
 
@@ -227,11 +258,8 @@ export function Configuracion({ username, permisos }: ConfiguracionProps) {
     };
 
     const handleRestaurarRespaldo = async () => {
-        if (!confirm("ADVERTENCIA: Al restaurar un respaldo, se PERDERÁN todos los datos actuales y serán reemplazados por los del respaldo. ¿Estás seguro de continuar?")) return;
-
         setMensaje(null);
         setError(null);
-
         try {
             const selected = await openDialog({
                 title: 'Seleccionar archivo de respaldo',
@@ -240,14 +268,27 @@ export function Configuracion({ username, permisos }: ConfiguracionProps) {
                     extensions: ['db']
                 }]
             });
-
             if (selected && typeof selected === 'string') {
-                await invoke('restaurar_backup', { rutaBackup: selected });
-                window.location.reload();
+                setRestoreError(null);
+                setRestoreComplete(false);
+                setRestorePath(selected);
             }
         } catch (err) {
-            console.error("Error al restaurar:", err);
-            notifications.show({ title: 'Error', message: `Error al restaurar: ${err}`, color: 'red' });
+            setError(`No se pudo seleccionar el respaldo: ${err}`);
+        }
+    };
+
+    const confirmarRestauracion = async () => {
+        if (!restorePath) return;
+        setRestoring(true);
+        setRestoreError(null);
+        try {
+            await invoke('restaurar_backup', { rutaBackup: restorePath });
+            setRestoreComplete(true);
+        } catch (reason) {
+            setRestoreError(String(reason));
+        } finally {
+            setRestoring(false);
         }
     };
 
@@ -279,6 +320,24 @@ export function Configuracion({ username, permisos }: ConfiguracionProps) {
 
     return (
         <Paper p="md" shadow="xs">
+            <Modal opened={restorePath !== null} onClose={() => { if (!restoreComplete && !restoring) setRestorePath(null); }}
+                closeOnEscape={!restoreComplete && !restoring} closeOnClickOutside={!restoreComplete && !restoring}
+                withCloseButton={!restoreComplete && !restoring} title={restoreComplete ? 'Restauración completada' : 'Confirmar restauración'} centered>
+                <Stack>
+                    {restoreComplete ? <>
+                        <Alert color="green">El respaldo se restauró. La sesión se cerró y se conservó una copia de la base anterior.</Alert>
+                        <Button onClick={() => window.location.reload()}>Volver al inicio de sesión</Button>
+                    </> : <>
+                        <Alert color="red" title="Se reemplazarán los datos actuales">La restauración sustituirá toda la información de esta base por la del respaldo seleccionado.</Alert>
+                        <Text size="sm" style={{ overflowWrap: 'anywhere' }}>{restorePath}</Text>
+                        {restoreError && <Alert color="red" title="No se pudo restaurar">{restoreError}</Alert>}
+                        <Group justify="flex-end">
+                            <Button variant="default" disabled={restoring} onClick={() => setRestorePath(null)}>Cancelar</Button>
+                            <Button color="red" loading={restoring} onClick={confirmarRestauracion}>Restaurar y cerrar sesión</Button>
+                        </Group>
+                    </>}
+                </Stack>
+            </Modal>
             <Title order={2} mb="xl">Configuración y Herramientas</Title>
 
             {mensaje && <Alert color="green" title="Éxito" mb="md" withCloseButton onClose={() => setMensaje(null)}>{mensaje}</Alert>}
@@ -287,6 +346,7 @@ export function Configuracion({ username, permisos }: ConfiguracionProps) {
             <Tabs defaultValue={initialTab}>
                 <Tabs.List mb="md">
                     {canManageUsers && <Tabs.Tab value="usuarios" leftSection={<IconUsers size="0.8rem" />}>Usuarios</Tabs.Tab>}
+                    {canManageUsers && <Tabs.Tab value="cifrado" leftSection={<IconDatabase size="0.8rem" />}>Cifrado</Tabs.Tab>}
                     {canEditCompany && <Tabs.Tab value="empresa" leftSection={<IconBuildingStore size="0.8rem" />}>Datos Empresa</Tabs.Tab>}
                     {(canBackup || canRestore) && <Tabs.Tab value="respaldos" leftSection={<IconDatabase size="0.8rem" />}>Respaldos</Tabs.Tab>}
                     {canAudit && <Tabs.Tab value="auditoria" leftSection={<IconHistory size="0.8rem" />}>Auditoría y Seguridad</Tabs.Tab>}
@@ -310,6 +370,20 @@ export function Configuracion({ username, permisos }: ConfiguracionProps) {
                         </Table.Thead>
                         <Table.Tbody>{rowsUsuarios}</Table.Tbody>
                     </Table>
+                </Tabs.Panel>}
+
+                {canManageUsers && <Tabs.Panel value="cifrado">
+                    <Stack maw={620}>
+                        <Title order={4}>Cifrado de la base local</Title>
+                        <Text size="sm">Estado: {cryptoStatus?.encrypted ? 'activado' : 'sin cifrar'}. Esta protección es opcional. La contraseña maestra es adicional a la de cada usuario y se pide al abrir la aplicación.</Text>
+                        {cryptoStatus?.encrypted ? <Alert color="green">La base y los nuevos respaldos se guardan cifrados. Conserva la contraseña maestra en un lugar seguro.</Alert> : <>
+                            <Alert color="red" title="Sin recuperación">Si pierdes la contraseña maestra, no podrás abrir la base ni sus respaldos cifrados. Los respaldos y exportaciones anteriores seguirán sin cifrar hasta que los sustituyas o retires.</Alert>
+                            <PasswordInput label="Contraseña maestra nueva" description="Mínimo 12 caracteres" value={masterPassword} onChange={(event) => setMasterPassword(event.currentTarget.value)} autoComplete="off" />
+                            <PasswordInput label="Confirmar contraseña maestra" value={masterConfirm} onChange={(event) => setMasterConfirm(event.currentTarget.value)} autoComplete="off" />
+                            <Checkbox label="Entiendo que perder esta contraseña impide recuperar los datos cifrados" checked={acceptPasswordLoss} onChange={(event) => setAcceptPasswordLoss(event.currentTarget.checked)} />
+                            <Button color="red" loading={encrypting} disabled={!acceptPasswordLoss || masterPassword.length < 12 || masterPassword !== masterConfirm} onClick={handleActivarCifrado}>Activar cifrado</Button>
+                        </>}
+                    </Stack>
                 </Tabs.Panel>}
 
                 {canEditCompany && <Tabs.Panel value="empresa">

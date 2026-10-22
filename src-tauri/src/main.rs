@@ -3,7 +3,7 @@
 use rusqlite::Connection;
 use std::sync::Mutex;
 use tauri::Manager;
-use ferreteria_app::{auth, commands, db};
+use ferreteria_app::{auth, commands, db, db_crypto};
 
 fn main() {
     let commands: Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync> = Box::new(tauri::generate_handler![
@@ -66,12 +66,19 @@ fn main() {
             commands::archivos::leer_clientes_archivo,
             commands::archivos::leer_proveedores_archivo,
             commands::archivos::guardar_reporte_archivo,
+            commands::archivos::guardar_codigo_barras_svg,
             ferreteria_app::mobile_scanner::iniciar_lector_movil,
             ferreteria_app::mobile_scanner::conectar_android_usb,
             ferreteria_app::mobile_scanner::tomar_lectura_movil,
             ferreteria_app::mobile_scanner::detener_lector_movil,
+            ferreteria_app::mobile_scanner::listar_dispositivos_lector,
+            ferreteria_app::mobile_scanner::revocar_dispositivo_lector,
             commands::configuracion::obtener_datos_empresa,
             commands::configuracion::guardar_datos_empresa,
+            db_crypto::estado_cifrado,
+            db_crypto::configurar_base_inicial,
+            db_crypto::desbloquear_base,
+            db_crypto::activar_cifrado,
             commands::devoluciones::generar_reporte_devoluciones,
             commands::analytics::obtener_productos_mas_vendidos,
             commands::analytics::obtener_ventas_por_categoria,
@@ -92,20 +99,30 @@ fn main() {
                 .path()
                 .app_data_dir()
                 .expect("Failed to get app data dir");
-            if !app_dir.exists() {
-                std::fs::create_dir_all(&app_dir).expect("Failed to create app data dir");
-            }
             let db_path = app_dir.join("ferreteria.db");
-            let conn = Connection::open(&db_path).expect("Failed to open database");
-
-            db::inicializar(&conn).expect("Failed to initialize database");
+            db::preparar_directorio_local(&app_dir).expect("Failed to prepare private data directory");
+            db_crypto::recover_interrupted_swap(&db_path).expect("Failed to recover database conversion");
+            let first_run = !db_path.exists();
+            if !first_run {
+                db::preparar_archivo_local(&app_dir, &db_path).expect("Failed to protect database file");
+            }
+            let encrypted = !first_run && db_crypto::is_encrypted(&db_path).expect("Failed to inspect database header");
+            let conn = if first_run || encrypted { Connection::open_in_memory().expect("Failed to open startup placeholder") }
+                else { Connection::open(&db_path).expect("Failed to open database") };
+            if !first_run && !encrypted { db::inicializar(&conn).expect("Failed to initialize database"); }
             app.manage(db::DbConnection(Mutex::new(conn)));
+            app.manage(db_crypto::CryptoState::new(db_path, first_run, encrypted));
             let background = app.handle().clone();
             std::thread::spawn(move || loop {
-                if let Some(database) = background.try_state::<db::DbConnection>() {
-                    if let Ok(mut conn) = database.0.lock() {
-                        if let Err(error) = commands::backups::run_automatic_recorded(&mut conn) {
-                            eprintln!("Respaldo automático: {error}");
+                if let (Some(crypto), Some(database)) = (
+                    background.try_state::<db_crypto::CryptoState>(),
+                    background.try_state::<db::DbConnection>(),
+                ) {
+                    if let Ok(key) = crypto.key() {
+                        if let Ok(mut conn) = database.0.lock() {
+                            if let Err(error) = commands::backups::run_automatic_recorded_key(&mut conn, key.as_deref()) {
+                                eprintln!("Respaldo automático: {error}");
+                            }
                         }
                     }
                 }
@@ -116,6 +133,15 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(move |invoke: tauri::ipc::Invoke| {
             let command = invoke.message.command();
+            let webview = invoke.message.webview_ref();
+            let crypto = webview.state::<db_crypto::CryptoState>();
+            if matches!(command, "estado_cifrado" | "configurar_base_inicial" | "desbloquear_base") {
+                return commands(invoke);
+            }
+            if crypto.status().map_or(true, |status| status.locked) {
+                invoke.resolver.reject("Primero abre la base de datos");
+                return true;
+            }
             if matches!(command, "login" | "hay_usuarios" | "crear_usuario_inicial") {
                 return commands(invoke);
             }
@@ -126,7 +152,6 @@ fn main() {
                     .get("x-session-token")
                     .and_then(|value| value.to_str().ok())
                     .unwrap_or("");
-                let webview = invoke.message.webview_ref();
                 let session = webview.state::<auth::SessionState>();
                 if !session.authorize(token, permission) {
                     return false;

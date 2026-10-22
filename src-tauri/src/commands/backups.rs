@@ -54,9 +54,13 @@ pub fn validate_settings(value: &BackupSettings) -> Result<(), String> {
     Ok(())
 }
 
-fn verify(path: &Path) -> Result<(), String> {
-    let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
-        .map_err(|e| e.to_string())?;
+fn verify(path: &Path, key: Option<&str>) -> Result<(), String> {
+    let conn = if let Some(password) = key {
+        crate::db_crypto::open_encrypted(path, password, true)?
+    } else {
+        Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(|e| e.to_string())?
+    };
     let check: String = conn.query_row("PRAGMA integrity_check", [], |row| row.get(0))
         .map_err(|e| e.to_string())?;
     if check != "ok" {
@@ -73,6 +77,10 @@ fn verify(path: &Path) -> Result<(), String> {
 }
 
 pub fn create_verified(conn: &Connection, destination: &Path) -> Result<(), String> {
+    create_verified_key(conn, destination, None)
+}
+
+pub fn create_verified_key(conn: &Connection, destination: &Path, key: Option<&str>) -> Result<(), String> {
     if destination.exists() {
         return Err("Ya existe un archivo con ese nombre".into());
     }
@@ -82,14 +90,18 @@ pub fn create_verified(conn: &Connection, destination: &Path) -> Result<(), Stri
     }
     let temp = parent.join(format!(".ferreteria-{}-{}.tmp", std::process::id(), Local::now().timestamp_nanos_opt().unwrap_or(0)));
     let result = (|| -> Result<(), String> {
-        let mut target = Connection::open(&temp).map_err(|e| e.to_string())?;
+        let mut target = if let Some(password) = key {
+            crate::db_crypto::create_keyed_destination(&temp, password)?
+        } else {
+            Connection::open(&temp).map_err(|e| e.to_string())?
+        };
         protect_file(&temp)?;
         {
             let backup = backup::Backup::new(conn, &mut target).map_err(|e| e.to_string())?;
             backup.step(-1).map_err(|e| e.to_string())?;
         }
         drop(target);
-        verify(&temp)?;
+        verify(&temp, key)?;
         fs::rename(&temp, destination).map_err(|e| e.to_string())?;
         Ok(())
     })();
@@ -112,6 +124,10 @@ fn existing_backups(folder: &Path) -> Result<Vec<PathBuf>, String> {
 }
 
 pub fn run_automatic(conn: &mut Connection) -> Result<Option<PathBuf>, String> {
+    run_automatic_key(conn, None)
+}
+
+pub fn run_automatic_key(conn: &mut Connection, key: Option<&str>) -> Result<Option<PathBuf>, String> {
     let config = settings(conn)?;
     if !config.enabled { return Ok(None); }
     validate_settings(&config)?;
@@ -119,14 +135,14 @@ pub fn run_automatic(conn: &mut Connection) -> Result<Option<PathBuf>, String> {
     let today = Local::now().format("%Y-%m-%d").to_string();
     if existing_backups(folder)?.iter().filter(|path| path.file_name().and_then(|n| n.to_str())
         .is_some_and(|n| n.starts_with(&format!("{PREFIX}{today}-"))))
-        .any(|path| verify(path).is_ok()) {
+        .any(|path| verify(path, key).is_ok()) {
         conn.execute("UPDATE configuracion_local SET ultimo_error = NULL WHERE id = 1", [])
             .map_err(|e| e.to_string())?;
         return Ok(None);
     }
     let filename = format!("{PREFIX}{}.db", Local::now().format("%Y-%m-%d-%H%M%S-%3f"));
     let destination = folder.join(filename);
-    create_verified(conn, &destination)?;
+    create_verified_key(conn, &destination, key)?;
 
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     let details = format!("archivo={}", destination.file_name().and_then(|name| name.to_str()).unwrap_or("respaldo"));
@@ -150,7 +166,11 @@ pub fn run_automatic(conn: &mut Connection) -> Result<Option<PathBuf>, String> {
 }
 
 pub fn run_automatic_recorded(conn: &mut Connection) -> Result<Option<PathBuf>, String> {
-    let result = run_automatic(conn);
+    run_automatic_recorded_key(conn, None)
+}
+
+pub fn run_automatic_recorded_key(conn: &mut Connection, key: Option<&str>) -> Result<Option<PathBuf>, String> {
+    let result = run_automatic_key(conn, key);
     if let Err(error) = &result {
         let _ = conn.execute("UPDATE configuracion_local SET ultimo_error = ?1 WHERE id = 1", params![error]);
     }

@@ -1,8 +1,9 @@
 // src/App.tsx
-import { lazy, Suspense, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { LayoutPrincipal } from './components/LayoutPrincipal';
 import { Login } from './components/Login';
+import { AccesoBase, type CryptoStatus } from './components/AccesoBase';
 import { clearSessionToken, invoke } from './lib/invoke';
 
 const Cotizaciones = lazy(() => import('./components/Cotizaciones'));
@@ -26,6 +27,18 @@ interface UsuarioLogueado {
 
 function App() {
   const [usuario, setUsuario] = useState<UsuarioLogueado | null>(null);
+  const [cryptoStatus, setCryptoStatus] = useState<CryptoStatus | null>(null);
+  const [cryptoError, setCryptoError] = useState<string | null>(null);
+
+  useEffect(() => {
+    invoke<CryptoStatus>('estado_cifrado').then(setCryptoStatus).catch((reason) => setCryptoError(String(reason)));
+  }, []);
+
+  if (cryptoError) return <div role="alert" style={{ padding: 24 }}>No se pudo abrir la base de datos: {cryptoError}</div>;
+  if (!cryptoStatus) return <div style={{ padding: 24 }}>Abriendo base de datos…</div>;
+  if (cryptoStatus.locked) return <AccesoBase status={cryptoStatus} onReady={() => {
+    invoke<CryptoStatus>('estado_cifrado').then(setCryptoStatus).catch((reason) => setCryptoError(String(reason)));
+  }} />;
 
   if (!usuario) {
     // Si no hay un usuario en el estado, mostramos la pantalla de Login.

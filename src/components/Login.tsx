@@ -117,6 +117,7 @@ export function Login({ onLoginSuccess }: LoginProps) {
         ) : hasUsers === true ? (
           <form onSubmit={handleLogin}>
             <Stack>
+              <Text size="sm" c="dimmed">Usa la contraseña de tu cuenta. Si activaste el cifrado, la contraseña maestra solo sirve para abrir la base de datos.</Text>
               <TextInput label="Usuario" value={username} onChange={(event) => setUsername(event.currentTarget.value)} required />
               <PasswordInput label="Contraseña" value={password} onChange={(event) => setPassword(event.currentTarget.value)} required />
               {error && <Alert icon={<IconAlertCircle size="1rem" />} color="red">{error}</Alert>}

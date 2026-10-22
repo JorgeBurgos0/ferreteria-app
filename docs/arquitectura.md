@@ -1,17 +1,32 @@
 # Arquitectura y datos locales
 
-La interfaz usa React y TypeScript dentro de Tauri 2. Los comandos Rust gestionan SQLite, autenticación y operaciones del negocio. La base se crea en el directorio de datos de la aplicación de cada usuario; no hay servidor de aplicación ni sincronización entre equipos.
+Ferretería App es una aplicación de escritorio de un solo equipo. React y TypeScript muestran la interfaz dentro de Tauri 2; los comandos Rust realizan las operaciones del negocio, validan permisos y escriben en SQLite. No hay servidor de aplicación ni sincronización entre equipos.
 
-## Acceso
+```mermaid
+flowchart LR
+  UI[Interfaz React] -->|Comandos Tauri| Rust[Backend Rust]
+  Rust -->|Lectura y escritura| DB[(SQLite local)]
+  Rust -->|Exportación y respaldo| Files[Archivos elegidos por el usuario]
+  Android[Android por USB] -->|adb reverse, localhost| Scanner[Lector local]
+  Scanner --> Rust
+```
 
-La primera apertura permite crear una cuenta administradora. Las contraseñas se almacenan como hashes Argon2. Cada comando propio de Tauri comprueba la sesión, el estado activo de la cuenta y el permiso actual en SQLite mediante `src-tauri/src/auth.rs`; las rutas de la interfaz también ocultan pantallas sin permiso. El plugin de diálogo selecciona rutas; la lectura de CSV/XLSX y la escritura de reportes se realizan en comandos Rust con permisos y límites de tamaño. Las capacidades de Tauri se definen en `src-tauri/capabilities/default.json`.
+## Acceso y permisos
 
-## Persistencia
+En la primera apertura se crea la base en modo cifrado o sin cifrar y después una cuenta administradora. El cifrado opcional usa SQLCipher; la contraseña maestra abre la base y permanece en la sesión del proceso, sin guardarse como contraseña recuperable. Las contraseñas de las cuentas se guardan como hashes Argon2.
 
-`src-tauri/src/db.rs` crea y actualiza el esquema. `PRAGMA user_version` identifica su versión y las migraciones se ejecutan dentro de una transacción. Ventas y devoluciones guardan importes de efectivo y tarjeta por separado; los kits guardan sus componentes al venderse para poder reponerlos en una devolución.
+La interfaz oculta las pantallas sin permiso. En el backend, `src-tauri/src/auth.rs` comprueba la sesión, el estado actual de la cuenta y el permiso del comando. La configuración de los plugins de Tauri está en `src-tauri/capabilities/default.json`. El diálogo del sistema elige rutas; la lectura de CSV/XLSX y la escritura de reportes se hacen en comandos Rust que validan tipo, tamaño y permisos.
 
-Los respaldos son copias SQLite locales elegidas por el usuario. El respaldo automático es opcional y se comprueba al iniciar la aplicación y cada hora mientras permanezca abierta; crea como máximo una copia diaria, verifica la integridad y rota solo sus propios archivos. La retención de bitácora se ejecuta después de una copia válida. La restauración comprueba la integridad, guarda una copia de seguridad previa, registra el evento en la base restaurada y cierra la sesión. La importación de clientes y proveedores se analiza en la interfaz y se valida de nuevo en Rust dentro de una transacción. El respaldo y los archivos exportados no están cifrados; quien administre el equipo debe protegerlos con permisos y almacenamiento adecuados.
+## Base, transacciones y respaldos
 
-## Dispositivos e integraciones
+`src-tauri/src/db.rs` define el esquema y sus migraciones mediante `PRAGMA user_version`. Las ventas y devoluciones guardan efectivo y tarjeta por separado. Una venta de kit conserva la instantánea de sus componentes para que una devolución pueda reponerlos. Las importaciones se previsualizan en la interfaz y se validan de nuevo en Rust antes de escribir dentro de una transacción.
 
-El lector de códigos puede comportarse como teclado y enviar un SKU seguido de Enter. El lector móvil opcional sirve una página solo en `127.0.0.1` y usa `adb reverse` para que Chrome en Android la abra como `localhost`; la cámara se procesa en el móvil y solo se envía el SKU. El servicio exige un código de emparejamiento y se cierra al salir del punto de venta o de la sesión. Los tickets usan el diálogo de impresión del sistema. El cobro con tarjeta se realiza fuera de la aplicación; esta registra el importe que declara el operador, sin comunicarse con una terminal ni almacenar números de tarjeta. La aplicación no envía datos del negocio a una nube propia.
+Los respaldos son archivos SQLite locales. Si la base está cifrada, los respaldos nuevos y la copia previa a una restauración usan su misma contraseña maestra; solo se restauran copias compatibles con el modo y la clave actuales. La aplicación verifica las copias antes de conservarlas. El respaldo automático, si se activa, se comprueba al abrir la base y cada hora mientras la aplicación siga abierta; genera como máximo uno al día y rota únicamente sus propios archivos. La depuración opcional de la bitácora ocurre después de una copia válida.
+
+La restauración valida el archivo, crea una copia de la base anterior, registra la operación y cierra la sesión. Las exportaciones XLSX y los respaldos anteriores a la activación del cifrado siguen sin cifrar.
+
+## Dispositivos y límites de integración
+
+Un lector de códigos que emite teclas puede enviar un SKU o código de barras seguido de Enter. El lector Android usa `adb reverse` y un servidor limitado a `127.0.0.1:33737`; no abre un puerto a la red local. El teléfono procesa la imagen de la cámara y envía solo el identificador leído. Su credencial de emparejamiento es aleatoria; SQLite guarda únicamente su hash SHA-256 asociado al usuario. El registro puede revocarse.
+
+Los tickets usan el diálogo de impresión del sistema. Los cobros con tarjeta ocurren fuera de la aplicación; se guarda el importe declarado por el operador, sin conexión a una terminal ni almacenamiento de números de tarjeta. La aplicación no envía datos del negocio a una nube propia.

@@ -45,6 +45,8 @@
     "licenseFile": "../LICENSE",
     "linux": {
       "rpm": {
+        "release": "5",
+        "depends": ["libcrypto.so.3()(64bit)"],
         "files": {
           "/usr/share/licenses/ferreteria-app/LICENSE": "../LICENSE"
         }

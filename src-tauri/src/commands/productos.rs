@@ -10,6 +10,7 @@ use tauri::State;
 pub struct Producto {
     id: i32,
     sku: String,
+    codigo_barras: Option<String>,
     nombre: String,
     descripcion: Option<String>,
     precio_venta: f64,
@@ -31,6 +32,8 @@ pub struct ComponenteKit {
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct ProductoImportacion {
     sku: String,
+    #[serde(default)]
+    codigo_barras: Option<String>,
     nombre: String,
     descripcion: Option<String>,
     precio_venta: f64,
@@ -87,11 +90,45 @@ fn validar_producto(
     Ok(())
 }
 
+fn normalizar_codigo(codigo: Option<String>) -> Result<Option<String>, String> {
+    let codigo = codigo.map(|value| value.trim().to_owned()).filter(|value| !value.is_empty());
+    if codigo.as_ref().is_some_and(|value| value.len() > 128 || value.chars().any(char::is_control)) {
+        return Err("Código de barras inválido".into());
+    }
+    Ok(codigo)
+}
+
+fn validar_identificadores(conn: &rusqlite::Connection, id: Option<i32>, sku: &str, codigo: Option<&str>) -> Result<(), String> {
+    let conflicto: Option<String> = conn.query_row(
+        "SELECT sku FROM productos WHERE id != ?1 AND (lower(sku) = lower(?2) OR lower(codigo_barras) = lower(?2) OR (?3 IS NOT NULL AND (lower(sku) = lower(?3) OR lower(codigo_barras) = lower(?3)))) LIMIT 1",
+        params![id.unwrap_or(-1), sku.trim(), codigo], |row| row.get(0),
+    ).optional().map_err(|e| e.to_string())?;
+    if let Some(other) = conflicto { return Err(format!("El SKU o código de barras ya pertenece a {other}")); }
+    Ok(())
+}
+
+#[cfg(test)]
+mod barcode_tests {
+    use super::*;
+
+    #[test]
+    fn barcode_and_sku_cannot_identify_different_products() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::inicializar(&conn).unwrap();
+        conn.execute("INSERT INTO productos (sku, nombre, precio_venta, stock_actual, codigo_barras) VALUES ('MART-1', 'Martillo', 10, 3, '7501234567890')", []).unwrap();
+        assert!(validar_identificadores(&conn, None, "7501234567890", None).is_err());
+        assert!(validar_identificadores(&conn, None, "CLAV-1", Some("mart-1")).is_err());
+        assert!(validar_identificadores(&conn, None, "CLAV-1", Some("7501234567890")).is_err());
+        assert!(validar_identificadores(&conn, Some(1), "MART-1", Some("7501234567890")).is_ok());
+        assert!(validar_identificadores(&conn, None, "CLAV-1", Some("7509876543210")).is_ok());
+    }
+}
+
 #[tauri::command]
 pub fn obtener_productos(db_state: State<DbConnection>) -> Result<Vec<Producto>, String> {
     let conn = db_state.0.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
-        .prepare("SELECT id, sku, nombre, descripcion, precio_venta, precio_mayoreo, stock_actual, stock_minimo, stock_maximo, categoria, ubicacion, es_kit FROM productos WHERE activo = 1")
+        .prepare("SELECT id, sku, nombre, descripcion, precio_venta, precio_mayoreo, stock_actual, stock_minimo, stock_maximo, categoria, ubicacion, es_kit, codigo_barras FROM productos WHERE activo = 1")
         .map_err(|e| e.to_string())?;
 
     let productos_iter = stmt
@@ -108,6 +145,7 @@ pub fn obtener_productos(db_state: State<DbConnection>) -> Result<Vec<Producto>,
             Ok(Producto {
                 id,
                 sku: row.get(1)?,
+                codigo_barras: row.get(12)?,
                 nombre: row.get(2)?,
                 descripcion: row.get(3)?,
                 precio_venta: row.get(4)?,
@@ -184,14 +222,14 @@ pub fn obtener_productos_paginados(
 
     // 1. Obtener Total
     let total: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM productos WHERE activo = 1 AND (nombre LIKE ?1 OR sku LIKE ?1)",
+        "SELECT COUNT(*) FROM productos WHERE activo = 1 AND (nombre LIKE ?1 OR sku LIKE ?1 OR codigo_barras LIKE ?1)",
         params![search_pattern],
         |row| row.get(0),
     ).map_err(|e| e.to_string())?;
 
     // 2. Obtener Productos Paginados
     let mut stmt = conn
-        .prepare("SELECT id, sku, nombre, descripcion, precio_venta, precio_mayoreo, stock_actual, stock_minimo, stock_maximo, categoria, ubicacion, es_kit FROM productos WHERE activo = 1 AND (nombre LIKE ?1 OR sku LIKE ?1) LIMIT ?2 OFFSET ?3")
+        .prepare("SELECT id, sku, nombre, descripcion, precio_venta, precio_mayoreo, stock_actual, stock_minimo, stock_maximo, categoria, ubicacion, es_kit, codigo_barras FROM productos WHERE activo = 1 AND (nombre LIKE ?1 OR sku LIKE ?1 OR codigo_barras LIKE ?1) LIMIT ?2 OFFSET ?3")
         .map_err(|e| e.to_string())?;
 
     let productos_iter = stmt
@@ -208,6 +246,7 @@ pub fn obtener_productos_paginados(
             Ok(Producto {
                 id,
                 sku: row.get(1)?,
+                codigo_barras: row.get(12)?,
                 nombre: row.get(2)?,
                 descripcion: row.get(3)?,
                 precio_venta: row.get(4)?,
@@ -276,7 +315,7 @@ pub fn obtener_producto_por_sku(
 ) -> Result<Option<Producto>, String> {
     let conn = db_state.0.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
-        .prepare("SELECT id, sku, nombre, descripcion, precio_venta, precio_mayoreo, stock_actual, stock_minimo, stock_maximo, categoria, ubicacion, es_kit FROM productos WHERE sku = ?1 AND activo = 1")
+        .prepare("SELECT id, sku, nombre, descripcion, precio_venta, precio_mayoreo, stock_actual, stock_minimo, stock_maximo, categoria, ubicacion, es_kit, codigo_barras FROM productos WHERE sku = ?1 AND activo = 1")
         .map_err(|e| e.to_string())?;
 
     let producto_result = stmt
@@ -288,6 +327,7 @@ pub fn obtener_producto_por_sku(
             Ok(Producto {
                 id,
                 sku: row.get(1)?,
+                codigo_barras: row.get(12)?,
                 nombre: row.get(2)?,
                 descripcion: row.get(3)?,
                 precio_venta: row.get(4)?,
@@ -346,6 +386,7 @@ pub fn obtener_producto_por_sku(
 pub fn agregar_producto(
     db_state: State<DbConnection>,
     sku: String,
+    codigo_barras: Option<String>,
     nombre: String,
     descripcion: Option<String>,
     precio_venta: f64,
@@ -360,11 +401,13 @@ pub fn agregar_producto(
 ) -> Result<i64, String> {
     let usuario = session.current_user()?.username;
     validar_producto(&sku, &nombre, precio_venta, precio_mayoreo, stock_actual, stock_minimo, stock_maximo)?;
+    let codigo_barras = normalizar_codigo(codigo_barras)?;
     let conn = db_state.0.lock().map_err(|e| e.to_string())?;
+    validar_identificadores(&conn, None, &sku, codigo_barras.as_deref())?;
     let cat = categoria.unwrap_or("General".to_string());
     conn.execute(
-        "INSERT INTO productos (sku, nombre, descripcion, precio_venta, precio_mayoreo, stock_actual, stock_minimo, stock_maximo, categoria, ubicacion, es_kit, activo) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 1)",
-        params![sku, nombre, descripcion, precio_venta, precio_mayoreo, stock_actual, stock_minimo, stock_maximo, cat, ubicacion, es_kit as i32],
+        "INSERT INTO productos (sku, nombre, descripcion, precio_venta, precio_mayoreo, stock_actual, stock_minimo, stock_maximo, categoria, ubicacion, es_kit, codigo_barras, activo) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 1)",
+        params![sku, nombre, descripcion, precio_venta, precio_mayoreo, stock_actual, stock_minimo, stock_maximo, cat, ubicacion, es_kit as i32, codigo_barras],
     )
     .map_err(|e| e.to_string())?;
 
@@ -382,6 +425,7 @@ pub fn actualizar_producto(
     db_state: State<DbConnection>,
     id: i32,
     sku: String,
+    codigo_barras: Option<String>,
     nombre: String,
     descripcion: Option<String>,
     precio_venta: f64,
@@ -396,11 +440,13 @@ pub fn actualizar_producto(
 ) -> Result<(), String> {
     let usuario = session.current_user()?.username;
     validar_producto(&sku, &nombre, precio_venta, precio_mayoreo, stock_actual, stock_minimo, stock_maximo)?;
+    let codigo_barras = normalizar_codigo(codigo_barras)?;
     let conn = db_state.0.lock().map_err(|e| e.to_string())?;
+    validar_identificadores(&conn, Some(id), &sku, codigo_barras.as_deref())?;
     let cat = categoria.unwrap_or("General".to_string());
     conn.execute(
-        "UPDATE productos SET sku = ?1, nombre = ?2, descripcion = ?3, precio_venta = ?4, precio_mayoreo = ?5, stock_actual = ?6, stock_minimo = ?7, stock_maximo = ?8, categoria = ?9, ubicacion = ?10, es_kit = ?11 WHERE id = ?12",
-        params![sku, nombre, descripcion, precio_venta, precio_mayoreo, stock_actual, stock_minimo, stock_maximo, cat, ubicacion, es_kit as i32, id],
+        "UPDATE productos SET sku = ?1, nombre = ?2, descripcion = ?3, precio_venta = ?4, precio_mayoreo = ?5, stock_actual = ?6, stock_minimo = ?7, stock_maximo = ?8, categoria = ?9, ubicacion = ?10, es_kit = ?11, codigo_barras = ?12 WHERE id = ?13",
+        params![sku, nombre, descripcion, precio_venta, precio_mayoreo, stock_actual, stock_minimo, stock_maximo, cat, ubicacion, es_kit as i32, codigo_barras, id],
     )
     .map_err(|e| e.to_string())?;
 
@@ -560,6 +606,17 @@ pub fn importar_productos_masivos(
             errores.push(format!("SKU {}: {}", p.sku, error));
             continue;
         }
+        let codigo_barras = match normalizar_codigo(p.codigo_barras) {
+            Ok(value) => value,
+            Err(error) => { errores.push(format!("SKU {}: {}", p.sku, error)); continue; }
+        };
+        let existing_id: Option<i32> = tx.query_row(
+            "SELECT id FROM productos WHERE sku = ?1", params![p.sku], |row| row.get(0),
+        ).optional().map_err(|e| e.to_string())?;
+        if let Err(error) = validar_identificadores(&tx, existing_id, &p.sku, codigo_barras.as_deref()) {
+            errores.push(format!("SKU {}: {}", p.sku, error));
+            continue;
+        }
         let cat = p.categoria.unwrap_or("General".to_string());
         
         // Verificar si existe
@@ -572,8 +629,8 @@ pub fn importar_productos_masivos(
         if existe > 0 {
             // Actualizar existente (solo precios y stock para no sobreescribir nombres si no se desea, pero asumiremos update completo)
             let res = tx.execute(
-                "UPDATE productos SET nombre=?2, descripcion=?3, precio_venta=?4, precio_mayoreo=?5, stock_actual = stock_actual + ?6, stock_minimo=?7, stock_maximo=?8, categoria=?9, ubicacion=?10, activo=1 WHERE sku=?1",
-                params![p.sku, p.nombre, p.descripcion, p.precio_venta, p.precio_mayoreo, p.stock_actual, p.stock_minimo, p.stock_maximo, cat, p.ubicacion],
+                "UPDATE productos SET nombre=?2, descripcion=?3, precio_venta=?4, precio_mayoreo=?5, stock_actual = stock_actual + ?6, stock_minimo=?7, stock_maximo=?8, categoria=?9, ubicacion=?10, codigo_barras=COALESCE(?11,codigo_barras), activo=1 WHERE sku=?1",
+                params![p.sku, p.nombre, p.descripcion, p.precio_venta, p.precio_mayoreo, p.stock_actual, p.stock_minimo, p.stock_maximo, cat, p.ubicacion, codigo_barras],
             );
             match res {
                 Ok(_) => exitosos += 1,
@@ -582,8 +639,8 @@ pub fn importar_productos_masivos(
         } else {
             // Insertar nuevo
             let res = tx.execute(
-                "INSERT INTO productos (sku, nombre, descripcion, precio_venta, precio_mayoreo, stock_actual, stock_minimo, stock_maximo, categoria, ubicacion, es_kit, activo) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, 1)",
-                params![p.sku, p.nombre, p.descripcion, p.precio_venta, p.precio_mayoreo, p.stock_actual, p.stock_minimo, p.stock_maximo, cat, p.ubicacion],
+                "INSERT INTO productos (sku, nombre, descripcion, precio_venta, precio_mayoreo, stock_actual, stock_minimo, stock_maximo, categoria, ubicacion, es_kit, codigo_barras, activo) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, ?11, 1)",
+                params![p.sku, p.nombre, p.descripcion, p.precio_venta, p.precio_mayoreo, p.stock_actual, p.stock_minimo, p.stock_maximo, cat, p.ubicacion, codigo_barras],
             );
             match res {
                 Ok(_) => exitosos += 1,

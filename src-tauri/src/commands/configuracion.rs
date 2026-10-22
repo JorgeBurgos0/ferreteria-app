@@ -95,6 +95,10 @@ pub fn guardar_datos_empresa(
 
 
 pub fn restore_database(backup_path: &Path, conn_dest: &mut Connection, safety_path: &Path) -> Result<(), String> {
+    restore_database_key(backup_path, conn_dest, safety_path, None)
+}
+
+pub fn restore_database_key(backup_path: &Path, conn_dest: &mut Connection, safety_path: &Path, key: Option<&str>) -> Result<(), String> {
     if !backup_path.exists() {
         return Err("El archivo de respaldo no existe".to_string());
     }
@@ -103,8 +107,12 @@ pub fn restore_database(backup_path: &Path, conn_dest: &mut Connection, safety_p
     }) {
         return Err("El respaldo y la base actual son el mismo archivo".into());
     }
-    let conn_backup = Connection::open_with_flags(backup_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
-        .map_err(|e| e.to_string())?;
+    let conn_backup = if let Some(password) = key {
+        crate::db_crypto::open_encrypted(backup_path, password, true)?
+    } else {
+        Connection::open_with_flags(backup_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(|e| e.to_string())?
+    };
     let integrity: String = conn_backup.query_row("PRAGMA integrity_check", [], |row| row.get(0))
         .map_err(|e| e.to_string())?;
     if integrity != "ok" {
@@ -122,7 +130,11 @@ pub fn restore_database(backup_path: &Path, conn_dest: &mut Connection, safety_p
     if users == 0 {
         return Err("El respaldo no contiene usuarios".into());
     }
-    let mut safety = Connection::open(safety_path).map_err(|e| e.to_string())?;
+    let mut safety = if let Some(password) = key {
+        crate::db_crypto::create_keyed_destination(safety_path, password)?
+    } else {
+        Connection::open(safety_path).map_err(|e| e.to_string())?
+    };
     backups::protect_file(safety_path)?;
     {
         let backup = backup::Backup::new(&*conn_dest, &mut safety).map_err(|e| e.to_string())?;
@@ -145,12 +157,13 @@ pub fn restore_database(backup_path: &Path, conn_dest: &mut Connection, safety_p
 }
 
 #[tauri::command]
-pub fn restaurar_backup(ruta_backup: String, db: DbConn, app: AppHandle, session: State<SessionState>, scanner: State<crate::mobile_scanner::MobileScannerState>) -> Result<(), String> {
+pub fn restaurar_backup(ruta_backup: String, db: DbConn, app: AppHandle, session: State<SessionState>, scanner: State<crate::mobile_scanner::MobileScannerState>, crypto: State<crate::db_crypto::CryptoState>) -> Result<(), String> {
     let actor = session.current_user()?.username;
+    let key = crypto.key()?;
     let mut conn_dest = db.0.lock().map_err(|e| e.to_string())?;
     let safety_path = app.path().app_data_dir().map_err(|e| e.to_string())?
         .join(format!("respaldo-previo-restauracion-{}.db", Local::now().timestamp_millis()));
-    restore_database(Path::new(&ruta_backup), &mut conn_dest, &safety_path)?;
+    restore_database_key(Path::new(&ruta_backup), &mut conn_dest, &safety_path, key.as_deref())?;
     auditoria::registrar_evento_interno(&conn_dest, &actor, "RESTAURAR_BACKUP", Some("Restauración completada; copia de seguridad previa conservada"))
         .map_err(|e| e.to_string())?;
     scanner.stop()?;
@@ -160,10 +173,11 @@ pub fn restaurar_backup(ruta_backup: String, db: DbConn, app: AppHandle, session
 }
 
 #[tauri::command]
-pub fn crear_backup(ruta_destino: String, db: DbConn, session: State<SessionState>) -> Result<(), String> {
+pub fn crear_backup(ruta_destino: String, db: DbConn, session: State<SessionState>, crypto: State<crate::db_crypto::CryptoState>) -> Result<(), String> {
     let usuario = session.current_user()?.username;
+    let key = crypto.key()?;
     let conn_src = db.0.lock().map_err(|e| e.to_string())?;
-    backups::create_verified(&conn_src, Path::new(&ruta_destino))?;
+    backups::create_verified_key(&conn_src, Path::new(&ruta_destino), key.as_deref())?;
     auditoria::registrar_evento_interno(&conn_src, &usuario, "CREAR_BACKUP", Some("Respaldo manual verificado"))
         .map_err(|e| e.to_string())?;
     Ok(())
