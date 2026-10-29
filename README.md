@@ -14,6 +14,14 @@ Aplicación de escritorio para gestionar inventario y ventas de una ferretería.
 
 La aplicación no sincroniza equipos ni envía datos a una nube propia. Los cobros con tarjeta se realizan en una terminal externa y se registran manualmente. La impresión utiliza el diálogo del sistema; no se ha validado todavía con una impresora de tickets física.
 
+## Capturas
+
+Interfaz con datos ficticios de demostración. Haz clic en una imagen para verla completa.
+
+| Panel principal | Inventario | Punto de venta |
+| --- | --- | --- |
+| [![Panel principal](docs/capturas/panel.png)](docs/capturas/panel.png) | [![Inventario](docs/capturas/inventario.png)](docs/capturas/inventario.png) | [![Punto de venta](docs/capturas/punto-de-venta.png)](docs/capturas/punto-de-venta.png) |
+
 ## Empezar
 
 Consulta la [guía de instalación](docs/instalacion.md) para preparar Fedora o compilar desde el código fuente. Después sigue [primeros pasos](docs/primeros-pasos.md) para crear la base, la cuenta administradora, un producto y un respaldo.
